@@ -25,6 +25,21 @@ from apps.marketplace.views import (
     ShipmentPODView,
     PODConfirmView,
     PODDisputeView,
+    PaymentInitiateView,
+    PaymentListView,
+    PaymentDetailView,
+    PaymentVerifyView,
+    PaymentReconcileView,
+    ShipmentPaymentsView,
+    FreightInvoiceListView,
+    FreightInvoiceDetailView,
+    FreightSettlementCreateView,
+    FreightSettlementListView,
+    FreightSettlementDetailView,
+    FreightSettlementDisputeView,
+    TransporterPayoutListView,
+    TransporterPayoutDetailView,
+    TransporterPayoutProcessView,
     RatingListCreateView,
 )
 
@@ -54,13 +69,30 @@ urlpatterns = [
     path('shipments/<int:pk>/location/', ShipmentLocationView.as_view(), name='shipment-location'),
     path('shipments/<int:pk>/tracking/', ShipmentTrackingHistoryView.as_view(), name='shipment-tracking-history'),
 
-    # Phase 7: Document Management & Digital Proof of Delivery (e-POD)
+    # Document Management & Digital Proof of Delivery (e-POD)
     path('shipments/<int:pk>/documents/', ShipmentDocumentListUploadView.as_view(), name='shipment-document-list-upload'),
     path('documents/<int:pk>/', DocumentDetailView.as_view(), name='document-detail'),
     path('documents/<int:pk>/download/', DocumentDownloadView.as_view(), name='document-download'),
     path('shipments/<int:pk>/pod/', ShipmentPODView.as_view(), name='shipment-pod'),
     path('pod/<int:pk>/confirm/', PODConfirmView.as_view(), name='pod-confirm'),
     path('pod/<int:pk>/dispute/', PODDisputeView.as_view(), name='pod-dispute'),
+
+    # Phase 8: Payments & Freight Settlement (FR-10)
+    path('payments/', PaymentListView.as_view(), name='payment-list'),
+    path('payments/initiate/', PaymentInitiateView.as_view(), name='payment-initiate'),
+    path('payments/<int:pk>/', PaymentDetailView.as_view(), name='payment-detail'),
+    path('payments/<int:pk>/verify/', PaymentVerifyView.as_view(), name='payment-verify'),
+    path('payments/<int:pk>/reconcile/', PaymentReconcileView.as_view(), name='payment-reconcile'),
+    path('shipments/<int:pk>/payments/', ShipmentPaymentsView.as_view(), name='shipment-payments'),
+    path('invoices/', FreightInvoiceListView.as_view(), name='invoice-list'),
+    path('invoices/<int:pk>/', FreightInvoiceDetailView.as_view(), name='invoice-detail'),
+    path('settlements/', FreightSettlementListView.as_view(), name='settlement-list'),
+    path('settlements/create/', FreightSettlementCreateView.as_view(), name='settlement-create'),
+    path('settlements/<int:pk>/', FreightSettlementDetailView.as_view(), name='settlement-detail'),
+    path('settlements/<int:pk>/dispute/', FreightSettlementDisputeView.as_view(), name='settlement-dispute'),
+    path('payouts/', TransporterPayoutListView.as_view(), name='payout-list'),
+    path('payouts/<int:pk>/', TransporterPayoutDetailView.as_view(), name='payout-detail'),
+    path('payouts/<int:pk>/process/', TransporterPayoutProcessView.as_view(), name='payout-process'),
 
     # Ratings
     path('ratings/', RatingListCreateView.as_view(), name='rating-list-create'),

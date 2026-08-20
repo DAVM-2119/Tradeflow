@@ -22,6 +22,15 @@ from apps.marketplace.models import (
     CargoCondition,
     PODConfirmationStatus,
     ProofOfDelivery,
+    PaymentStatus,
+    FreightInvoice,
+    SettlementStatus,
+    FreightSettlement,
+    Payment,
+    PayoutStatus,
+    TransporterPayout,
+    PaymentDisputeStatus,
+    PaymentDispute,
     Rating,
 )
 from apps.marketplace.serializers import (
@@ -42,9 +51,31 @@ from apps.marketplace.serializers import (
     ProofOfDeliverySerializer,
     PODCreateSerializer,
     PODDisputeSerializer,
+    FreightInvoiceSerializer,
+    FreightSettlementSerializer,
+    PaymentSerializer,
+    PaymentInitiateSerializer,
+    TransporterPayoutSerializer,
+    PaymentDisputeSerializer,
+    DisputeRaiseSerializer,
+    DisputeResolveSerializer,
     RatingSerializer,
 )
-from apps.marketplace.services import VerificationService, FleetService, LoadService, BiddingService, TrackingService, DocumentService, PODService
+from apps.marketplace.services import (
+    VerificationService,
+    FleetService,
+    LoadService,
+    BiddingService,
+    TrackingService,
+    DocumentService,
+    PODService,
+    InvoiceService,
+    SettlementService,
+    PaymentService,
+    ReconciliationService,
+    PayoutService,
+    DisputeService,
+)
 from apps.marketplace.permissions import (
     IsVehicleOwnerOrAdmin,
     IsTransporterVerified,
@@ -53,6 +84,8 @@ from apps.marketplace.permissions import (
     IsShipmentParticipantOrAdmin,
     IsShipmentDocumentParticipantOrAdmin,
     IsPODConfirmableByShipper,
+    IsPaymentParticipantOrAdmin,
+    IsDisputeResolvableByAdmin,
 )
 
 
@@ -592,10 +625,6 @@ class ShipmentTrackingHistoryView(generics.GenericAPIView):
         }, status=status.HTTP_200_OK)
 
 
-# ============================================================================
-# PHASE 7: DOCUMENT MANAGEMENT & DIGITAL PROOF OF DELIVERY (e-POD) VIEWS
-# ============================================================================
-
 class ShipmentDocumentListUploadView(generics.GenericAPIView):
     """
     GET: List all documents uploaded for a shipment.
@@ -787,6 +816,300 @@ class PODDisputeView(generics.GenericAPIView):
         dispute_reason = serializer.validated_data['dispute_reason']
         disputed_pod = PODService.dispute_pod(pod, request.user, dispute_reason)
         return Response(ProofOfDeliverySerializer(disputed_pod).data, status=status.HTTP_200_OK)
+
+
+# ============================================================================
+# PHASE 8: PAYMENTS & FREIGHT SETTLEMENT VIEWS (FR-10)
+# ============================================================================
+
+class PaymentInitiateView(generics.GenericAPIView):
+    """
+    POST: Initiate a freight payment with idempotency key enforcement.
+    """
+    serializer_class = PaymentInitiateSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    @extend_schema(summary="Initiate payment transaction (Idempotent)")
+    def post(self, request):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        settlement_id = serializer.validated_data['settlement_id']
+        idempotency_key = serializer.validated_data['idempotency_key']
+        provider_name = serializer.validated_data.get('provider_name', 'MOCK')
+
+        try:
+            settlement = FreightSettlement.objects.get(pk=settlement_id)
+        except FreightSettlement.DoesNotExist:
+            raise NotFound("Freight settlement not found.")
+
+        payment = PaymentService.initiate_payment(
+            settlement=settlement,
+            payer_user=request.user,
+            idempotency_key=idempotency_key,
+            provider_name=provider_name
+        )
+        return Response(PaymentSerializer(payment).data, status=status.HTTP_201_CREATED)
+
+
+class PaymentListView(generics.ListAPIView):
+    """
+    GET: List payment transactions for authenticated participant or Admin.
+    """
+    serializer_class = PaymentSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        user = self.request.user
+        if user.is_superuser or user.role == Role.ADMIN:
+            return Payment.objects.all().select_related('shipment', 'settlement', 'payer')
+        elif hasattr(user, 'shipper_profile'):
+            return Payment.objects.filter(shipment__load__shipper=user.shipper_profile).select_related('shipment', 'settlement', 'payer')
+        elif hasattr(user, 'transporter_profile'):
+            return Payment.objects.filter(shipment__transporter=user.transporter_profile).select_related('shipment', 'settlement', 'payer')
+        return Payment.objects.none()
+
+    @extend_schema(summary="List payment transactions")
+    def get(self, request, *args, **kwargs):
+        return super().get(request, *args, **kwargs)
+
+
+class PaymentDetailView(generics.RetrieveAPIView):
+    """
+    GET: Retrieve details of a payment transaction.
+    """
+    queryset = Payment.objects.all().select_related('shipment', 'settlement', 'payer')
+    serializer_class = PaymentSerializer
+    permission_classes = [permissions.IsAuthenticated, IsPaymentParticipantOrAdmin]
+
+    @extend_schema(summary="Get payment transaction details")
+    def get(self, request, *args, **kwargs):
+        return super().get(request, *args, **kwargs)
+
+
+class PaymentVerifyView(generics.GenericAPIView):
+    """
+    POST: Verify payment transaction status with PaymentProvider.
+    """
+    serializer_class = PaymentSerializer
+    permission_classes = [permissions.IsAuthenticated, IsPaymentParticipantOrAdmin]
+
+    @extend_schema(summary="Verify payment transaction with payment provider")
+    def post(self, request, pk=None):
+        try:
+            payment = Payment.objects.get(pk=pk)
+        except Payment.DoesNotExist:
+            raise NotFound("Payment not found.")
+
+        self.check_object_permissions(request, payment)
+        verified_payment = PaymentService.verify_and_confirm_payment(payment, request.user)
+        return Response(PaymentSerializer(verified_payment).data, status=status.HTTP_200_OK)
+
+
+class PaymentReconcileView(generics.GenericAPIView):
+    """
+    POST: ADMIN-ONLY Endpoint to reconcile internal payment against provider transaction status.
+    """
+    permission_classes = [permissions.IsAuthenticated, IsAdmin]
+
+    @extend_schema(summary="Reconcile payment transaction against provider (Admin only)")
+    def post(self, request, pk=None):
+        try:
+            payment = Payment.objects.get(pk=pk)
+        except Payment.DoesNotExist:
+            raise NotFound("Payment not found.")
+
+        report = ReconciliationService.reconcile_payment(payment)
+        return Response(report, status=status.HTTP_200_OK)
+
+
+class ShipmentPaymentsView(generics.ListAPIView):
+    """
+    GET: List payments for a specific shipment.
+    """
+    serializer_class = PaymentSerializer
+    permission_classes = [permissions.IsAuthenticated, IsShipmentParticipantOrAdmin]
+
+    def get_queryset(self):
+        shipment_id = self.kwargs.get('pk')
+        return Payment.objects.filter(shipment_id=shipment_id).select_related('settlement', 'payer')
+
+    @extend_schema(summary="Get payment transactions for a specific shipment")
+    def get(self, request, *args, **kwargs):
+        return super().get(request, *args, **kwargs)
+
+
+class FreightInvoiceListView(generics.ListAPIView):
+    """
+    GET: List freight invoices.
+    """
+    serializer_class = FreightInvoiceSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        user = self.request.user
+        if user.is_superuser or user.role == Role.ADMIN:
+            return FreightInvoice.objects.all().select_related('shipment', 'issuer', 'payer')
+        elif hasattr(user, 'shipper_profile'):
+            return FreightInvoice.objects.filter(shipment__load__shipper=user.shipper_profile).select_related('shipment', 'issuer', 'payer')
+        elif hasattr(user, 'transporter_profile'):
+            return FreightInvoice.objects.filter(shipment__transporter=user.transporter_profile).select_related('shipment', 'issuer', 'payer')
+        return FreightInvoice.objects.none()
+
+    @extend_schema(summary="List freight invoices")
+    def get(self, request, *args, **kwargs):
+        return super().get(request, *args, **kwargs)
+
+
+class FreightInvoiceDetailView(generics.RetrieveAPIView):
+    """
+    GET: Retrieve freight invoice details.
+    """
+    queryset = FreightInvoice.objects.all().select_related('shipment', 'issuer', 'payer')
+    serializer_class = FreightInvoiceSerializer
+    permission_classes = [permissions.IsAuthenticated, IsPaymentParticipantOrAdmin]
+
+    @extend_schema(summary="Get freight invoice details")
+    def get(self, request, *args, **kwargs):
+        return super().get(request, *args, **kwargs)
+
+
+class FreightSettlementCreateView(generics.GenericAPIView):
+    """
+    POST: Create freight settlement for a completed shipment.
+    """
+    serializer_class = FreightSettlementSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    @extend_schema(summary="Create freight settlement for a shipment")
+    def post(self, request):
+        shipment_id = request.data.get('shipment_id')
+        if not shipment_id:
+            raise ValidationError({'shipment_id': 'shipment_id is required.'})
+
+        try:
+            shipment = Shipment.objects.get(pk=shipment_id)
+        except Shipment.DoesNotExist:
+            raise NotFound("Shipment not found.")
+
+        # Permission check
+        is_shipper = hasattr(request.user, 'shipper_profile') and shipment.load.shipper == request.user.shipper_profile
+        is_transporter = hasattr(request.user, 'transporter_profile') and shipment.transporter == request.user.transporter_profile
+        is_admin = request.user.is_superuser or request.user.role == Role.ADMIN
+
+        if not (is_shipper or is_transporter or is_admin):
+            raise PermissionDenied("Only shipment participants or administrators can generate a settlement.")
+
+        settlement = SettlementService.create_settlement_for_shipment(shipment)
+        return Response(FreightSettlementSerializer(settlement).data, status=status.HTTP_201_CREATED)
+
+
+class FreightSettlementListView(generics.ListAPIView):
+    """
+    GET: List freight settlements.
+    """
+    serializer_class = FreightSettlementSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        user = self.request.user
+        if user.is_superuser or user.role == Role.ADMIN:
+            return FreightSettlement.objects.all().select_related('shipment', 'invoice')
+        elif hasattr(user, 'shipper_profile'):
+            return FreightSettlement.objects.filter(shipment__load__shipper=user.shipper_profile).select_related('shipment', 'invoice')
+        elif hasattr(user, 'transporter_profile'):
+            return FreightSettlement.objects.filter(shipment__transporter=user.transporter_profile).select_related('shipment', 'invoice')
+        return FreightSettlement.objects.none()
+
+    @extend_schema(summary="List freight settlements")
+    def get(self, request, *args, **kwargs):
+        return super().get(request, *args, **kwargs)
+
+
+class FreightSettlementDetailView(generics.RetrieveAPIView):
+    """
+    GET: Retrieve freight settlement details.
+    """
+    queryset = FreightSettlement.objects.all().select_related('shipment', 'invoice')
+    serializer_class = FreightSettlementSerializer
+    permission_classes = [permissions.IsAuthenticated, IsPaymentParticipantOrAdmin]
+
+    @extend_schema(summary="Get freight settlement details")
+    def get(self, request, *args, **kwargs):
+        return super().get(request, *args, **kwargs)
+
+
+class FreightSettlementDisputeView(generics.GenericAPIView):
+    """
+    POST: Raise a financial dispute on a freight settlement.
+    """
+    serializer_class = DisputeRaiseSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    @extend_schema(summary="Raise a payment settlement dispute")
+    def post(self, request, pk=None):
+        try:
+            settlement = FreightSettlement.objects.get(pk=pk)
+        except FreightSettlement.DoesNotExist:
+            raise NotFound("Freight settlement not found.")
+
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        reason = serializer.validated_data['reason']
+        dispute = DisputeService.raise_dispute(settlement, request.user, reason)
+        return Response(PaymentDisputeSerializer(dispute).data, status=status.HTTP_201_CREATED)
+
+
+class TransporterPayoutListView(generics.ListAPIView):
+    """
+    GET: List transporter payouts.
+    """
+    serializer_class = TransporterPayoutSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        user = self.request.user
+        if user.is_superuser or user.role == Role.ADMIN:
+            return TransporterPayout.objects.all().select_related('settlement', 'transporter')
+        elif hasattr(user, 'transporter_profile'):
+            return TransporterPayout.objects.filter(transporter=user.transporter_profile).select_related('settlement', 'transporter')
+        return TransporterPayout.objects.none()
+
+    @extend_schema(summary="List transporter payouts")
+    def get(self, request, *args, **kwargs):
+        return super().get(request, *args, **kwargs)
+
+
+class TransporterPayoutDetailView(generics.RetrieveAPIView):
+    """
+    GET: Retrieve transporter payout details.
+    """
+    queryset = TransporterPayout.objects.all().select_related('settlement', 'transporter')
+    serializer_class = TransporterPayoutSerializer
+    permission_classes = [permissions.IsAuthenticated, IsPaymentParticipantOrAdmin]
+
+    @extend_schema(summary="Get transporter payout details")
+    def get(self, request, *args, **kwargs):
+        return super().get(request, *args, **kwargs)
+
+
+class TransporterPayoutProcessView(generics.GenericAPIView):
+    """
+    POST: ADMIN-ONLY Endpoint to process transporter payout transfer.
+    """
+    permission_classes = [permissions.IsAuthenticated, IsAdmin]
+    serializer_class = TransporterPayoutSerializer
+
+    @extend_schema(summary="Process transporter payout transfer (Admin only)")
+    def post(self, request, pk=None):
+        try:
+            payout = TransporterPayout.objects.get(pk=pk)
+        except TransporterPayout.DoesNotExist:
+            raise NotFound("Transporter payout not found.")
+
+        processed_payout = PayoutService.process_payout(payout, request.user)
+        return Response(TransporterPayoutSerializer(processed_payout).data, status=status.HTTP_200_OK)
 
 
 class RatingListCreateView(generics.ListCreateAPIView):

@@ -8,6 +8,11 @@ from apps.marketplace.models import (
     ShipmentMilestone,
     ShipmentDocument,
     ProofOfDelivery,
+    FreightInvoice,
+    FreightSettlement,
+    Payment,
+    TransporterPayout,
+    PaymentDispute,
     Rating,
 )
 
@@ -73,6 +78,46 @@ class ProofOfDeliveryAdmin(admin.ModelAdmin):
     list_display = ('shipment', 'recipient_name', 'cargo_condition', 'confirmation_status', 'confirmed_by_shipper', 'delivered_at')
     list_filter = ('cargo_condition', 'confirmation_status', 'delivered_at')
     search_fields = ('recipient_name', 'shipment__tracking_number', 'dispute_reason')
+    readonly_fields = ('created_at', 'updated_at')
+
+
+@admin.register(FreightInvoice)
+class FreightInvoiceAdmin(admin.ModelAdmin):
+    list_display = ('invoice_number', 'shipment', 'payer', 'subtotal_amount', 'total_amount', 'status', 'issue_date', 'due_date')
+    list_filter = ('status', 'currency', 'issue_date')
+    search_fields = ('invoice_number', 'shipment__tracking_number', 'payer__email')
+    readonly_fields = ('created_at', 'updated_at')
+
+
+@admin.register(FreightSettlement)
+class FreightSettlementAdmin(admin.ModelAdmin):
+    list_display = ('shipment', 'gross_freight_amount', 'commission_rate', 'platform_commission_amount', 'transporter_net_payable', 'status', 'settled_at')
+    list_filter = ('status', 'created_at')
+    search_fields = ('shipment__tracking_number', 'invoice__invoice_number')
+    readonly_fields = ('created_at', 'updated_at')
+
+
+@admin.register(Payment)
+class PaymentAdmin(admin.ModelAdmin):
+    list_display = ('idempotency_key', 'shipment', 'payer', 'amount', 'currency', 'provider', 'provider_transaction_id', 'status', 'initiated_at')
+    list_filter = ('status', 'provider', 'currency', 'initiated_at')
+    search_fields = ('idempotency_key', 'provider_transaction_id', 'shipment__tracking_number', 'payer__email')
+    readonly_fields = ('created_at', 'updated_at', 'idempotency_key', 'provider_transaction_id')
+
+
+@admin.register(TransporterPayout)
+class TransporterPayoutAdmin(admin.ModelAdmin):
+    list_display = ('payout_reference', 'transporter', 'gross_amount', 'commission_amount', 'net_payout_amount', 'status', 'processed_at')
+    list_filter = ('status', 'scheduled_at', 'processed_at')
+    search_fields = ('payout_reference', 'transporter__company_name', 'settlement__shipment__tracking_number')
+    readonly_fields = ('created_at', 'updated_at', 'payout_reference')
+
+
+@admin.register(PaymentDispute)
+class PaymentDisputeAdmin(admin.ModelAdmin):
+    list_display = ('settlement', 'raised_by', 'status', 'resolved_by', 'created_at', 'resolved_at')
+    list_filter = ('status', 'created_at')
+    search_fields = ('reason', 'resolution_notes', 'raised_by__email', 'settlement__shipment__tracking_number')
     readonly_fields = ('created_at', 'updated_at')
 
 

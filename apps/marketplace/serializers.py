@@ -17,6 +17,15 @@ from apps.marketplace.models import (
     CargoCondition,
     PODConfirmationStatus,
     ProofOfDelivery,
+    PaymentStatus,
+    FreightInvoice,
+    SettlementStatus,
+    FreightSettlement,
+    Payment,
+    PayoutStatus,
+    TransporterPayout,
+    PaymentDisputeStatus,
+    PaymentDispute,
     Rating,
 )
 
@@ -291,10 +300,6 @@ class ShipmentStatusUpdateSerializer(serializers.Serializer):
     notes = serializers.CharField(required=False, allow_blank=True)
 
 
-# ============================================================================
-# PHASE 7: DOCUMENT MANAGEMENT & DIGITAL PROOF OF DELIVERY (e-POD) SERIALIZERS
-# ============================================================================
-
 class ShipmentDocumentSerializer(serializers.ModelSerializer):
     uploaded_by_email = serializers.EmailField(source='uploaded_by.email', read_only=True)
 
@@ -370,6 +375,153 @@ class PODCreateSerializer(serializers.ModelSerializer):
 
 class PODDisputeSerializer(serializers.Serializer):
     dispute_reason = serializers.CharField(required=True)
+
+
+# ============================================================================
+# PHASE 8: PAYMENTS & FREIGHT SETTLEMENT SERIALIZERS (FR-10)
+# ============================================================================
+
+class FreightInvoiceSerializer(serializers.ModelSerializer):
+    issuer_email = serializers.EmailField(source='issuer.email', read_only=True, default=None)
+    payer_email = serializers.EmailField(source='payer.email', read_only=True, default=None)
+
+    class Meta:
+        model = FreightInvoice
+        fields = (
+            'id',
+            'invoice_number',
+            'shipment',
+            'issuer',
+            'issuer_email',
+            'payer',
+            'payer_email',
+            'subtotal_amount',
+            'commission_amount',
+            'total_amount',
+            'currency',
+            'status',
+            'issue_date',
+            'due_date',
+            'paid_date',
+            'notes',
+            'created_at',
+            'updated_at',
+        )
+        read_only_fields = fields
+
+
+class FreightSettlementSerializer(serializers.ModelSerializer):
+    shipment_tracking_number = serializers.CharField(source='shipment.tracking_number', read_only=True)
+    invoice_number = serializers.CharField(source='invoice.invoice_number', read_only=True, default=None)
+
+    class Meta:
+        model = FreightSettlement
+        fields = (
+            'id',
+            'shipment',
+            'shipment_tracking_number',
+            'invoice',
+            'invoice_number',
+            'gross_freight_amount',
+            'commission_rate',
+            'platform_commission_amount',
+            'transporter_net_payable',
+            'status',
+            'settled_at',
+            'created_at',
+            'updated_at',
+        )
+        read_only_fields = fields
+
+
+class PaymentSerializer(serializers.ModelSerializer):
+    payer_email = serializers.EmailField(source='payer.email', read_only=True, default=None)
+
+    class Meta:
+        model = Payment
+        fields = (
+            'id',
+            'idempotency_key',
+            'shipment',
+            'settlement',
+            'payer',
+            'payer_email',
+            'amount',
+            'currency',
+            'provider',
+            'provider_transaction_id',
+            'payment_method',
+            'status',
+            'initiated_at',
+            'confirmed_at',
+            'failed_at',
+            'created_at',
+            'updated_at',
+        )
+        read_only_fields = fields
+
+
+class PaymentInitiateSerializer(serializers.Serializer):
+    settlement_id = serializers.IntegerField()
+    idempotency_key = serializers.CharField(max_length=100)
+    provider_name = serializers.CharField(max_length=50, default='MOCK', required=False)
+
+
+class TransporterPayoutSerializer(serializers.ModelSerializer):
+    transporter_company = serializers.CharField(source='transporter.company_name', read_only=True)
+
+    class Meta:
+        model = TransporterPayout
+        fields = (
+            'id',
+            'settlement',
+            'transporter',
+            'transporter_company',
+            'gross_amount',
+            'commission_amount',
+            'net_payout_amount',
+            'status',
+            'payout_reference',
+            'scheduled_at',
+            'processed_at',
+            'failure_reason',
+            'created_at',
+            'updated_at',
+        )
+        read_only_fields = fields
+
+
+class PaymentDisputeSerializer(serializers.ModelSerializer):
+    raised_by_email = serializers.EmailField(source='raised_by.email', read_only=True)
+    resolved_by_email = serializers.EmailField(source='resolved_by.email', read_only=True, default=None)
+
+    class Meta:
+        model = PaymentDispute
+        fields = (
+            'id',
+            'payment',
+            'settlement',
+            'raised_by',
+            'raised_by_email',
+            'reason',
+            'status',
+            'resolution_notes',
+            'resolved_by',
+            'resolved_by_email',
+            'resolved_at',
+            'created_at',
+            'updated_at',
+        )
+        read_only_fields = fields
+
+
+class DisputeRaiseSerializer(serializers.Serializer):
+    reason = serializers.CharField(required=True)
+
+
+class DisputeResolveSerializer(serializers.Serializer):
+    resolution_notes = serializers.CharField(required=True)
+    status = serializers.ChoiceField(choices=[PaymentDisputeStatus.RESOLVED, PaymentDisputeStatus.REJECTED], default=PaymentDisputeStatus.RESOLVED)
 
 
 class RatingSerializer(serializers.ModelSerializer):

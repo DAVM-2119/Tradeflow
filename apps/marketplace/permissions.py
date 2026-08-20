@@ -101,15 +101,12 @@ class IsShipmentParticipantOrAdmin(BasePermission):
         if user.is_superuser or user.role == Role.ADMIN:
             return True
 
-        # Shipper load owner
         if hasattr(user, 'shipper_profile') and obj.load.shipper == user.shipper_profile:
             return True
 
-        # Transporter owner
         if hasattr(user, 'transporter_profile') and obj.transporter == user.transporter_profile:
             return True
 
-        # Assigned driver
         if hasattr(user, 'driver_profile') and obj.driver == user.driver_profile:
             return True
 
@@ -134,15 +131,12 @@ class IsShipmentDocumentParticipantOrAdmin(BasePermission):
 
         shipment = getattr(obj, 'shipment', obj)
 
-        # Shipper load owner
         if hasattr(user, 'shipper_profile') and shipment.load.shipper == user.shipper_profile:
             return True
 
-        # Transporter owner
         if hasattr(user, 'transporter_profile') and shipment.transporter == user.transporter_profile:
             return True
 
-        # Assigned driver
         if hasattr(user, 'driver_profile') and shipment.driver == user.driver_profile:
             return True
 
@@ -170,3 +164,44 @@ class IsPODConfirmableByShipper(BasePermission):
             return hasattr(user, 'shipper_profile') and pod.shipment.load.shipper == user.shipper_profile
 
         return False
+
+
+class IsPaymentParticipantOrAdmin(BasePermission):
+    """
+    Object-level permission ensuring only financial participants
+    (Shipper payer, Transporter payee, or Admin) can view/initiate payments and settlements.
+    """
+    def has_permission(self, request, view):
+        return bool(request.user and request.user.is_authenticated)
+
+    def has_object_permission(self, request, view, obj):
+        user = request.user
+        if not (user and user.is_authenticated):
+            return False
+
+        if user.is_superuser or user.role == Role.ADMIN:
+            return True
+
+        shipment = getattr(obj, 'shipment', None)
+        if shipment:
+            if hasattr(user, 'shipper_profile') and shipment.load.shipper == user.shipper_profile:
+                return True
+            if hasattr(user, 'transporter_profile') and shipment.transporter == user.transporter_profile:
+                return True
+
+        if hasattr(obj, 'payer') and obj.payer == user:
+            return True
+
+        if hasattr(obj, 'transporter') and hasattr(user, 'transporter_profile') and obj.transporter == user.transporter_profile:
+            return True
+
+        return False
+
+
+class IsDisputeResolvableByAdmin(BasePermission):
+    """
+    Permission class ensuring only Administrators can resolve payment disputes.
+    """
+    def has_permission(self, request, view):
+        user = request.user
+        return bool(user and user.is_authenticated and (user.is_superuser or user.role == Role.ADMIN or user.is_staff))

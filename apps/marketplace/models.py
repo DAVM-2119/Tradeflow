@@ -1,3 +1,4 @@
+from decimal import Decimal
 from django.db import models
 from django.conf import settings
 from apps.accounts.models import TransporterProfile, DriverProfile, ShipperProfile
@@ -437,6 +438,274 @@ class ProofOfDelivery(models.Model):
 
     def __str__(self):
         return f"e-POD for {self.shipment.tracking_number}: {self.confirmation_status} (Recipient: {self.recipient_name})"
+
+
+# ============================================================================
+# PHASE 8: PAYMENTS & FREIGHT SETTLEMENT MODELS (FR-10)
+# ============================================================================
+
+class PaymentStatus(models.TextChoices):
+    PENDING = 'PENDING', 'Pending'
+    INITIATED = 'INITIATED', 'Payment Initiated'
+    PROCESSING = 'PROCESSING', 'Processing'
+    SUCCEEDED = 'SUCCEEDED', 'Payment Succeeded'
+    FAILED = 'FAILED', 'Payment Failed'
+    CANCELLED = 'CANCELLED', 'Cancelled'
+    REFUNDED = 'REFUNDED', 'Refunded'
+
+
+class FreightInvoice(models.Model):
+    """
+    Freight invoice generated for a completed or assigned corridor shipment.
+    """
+    invoice_number = models.CharField(max_length=50, unique=True, db_index=True)
+    shipment = models.ForeignKey(
+        Shipment,
+        on_delete=models.CASCADE,
+        related_name='invoices'
+    )
+    issuer = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='issued_invoices'
+    )
+    payer = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='payable_invoices'
+    )
+    subtotal_amount = models.DecimalField(max_digits=12, decimal_places=2)
+    commission_amount = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0.00'))
+    total_amount = models.DecimalField(max_digits=12, decimal_places=2)
+    currency = models.CharField(max_length=10, default='ETB')
+    status = models.CharField(
+        max_length=20,
+        choices=PaymentStatus.choices,
+        default=PaymentStatus.PENDING,
+        db_index=True
+    )
+    issue_date = models.DateField(auto_now_add=True)
+    due_date = models.DateField()
+    paid_date = models.DateTimeField(null=True, blank=True)
+    notes = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Freight Invoice'
+        verbose_name_plural = 'Freight Invoices'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"Invoice {self.invoice_number} - {self.total_amount} {self.currency} ({self.status})"
+
+
+class SettlementStatus(models.TextChoices):
+    PENDING = 'PENDING', 'Pending e-POD'
+    READY = 'READY', 'Ready for Payment'
+    PAYMENT_PENDING = 'PAYMENT_PENDING', 'Payment Pending'
+    PAID = 'PAID', 'Paid into Escrow State'
+    SETTLED = 'SETTLED', 'Fully Settled'
+    DISPUTED = 'DISPUTED', 'Disputed'
+    CANCELLED = 'CANCELLED', 'Cancelled'
+
+
+class FreightSettlement(models.Model):
+    """
+    Financial reconciliation record for a freight shipment, calculating gross freight,
+    platform commission, and transporter net payable amount.
+    """
+    shipment = models.OneToOneField(
+        Shipment,
+        on_delete=models.CASCADE,
+        related_name='settlement'
+    )
+    invoice = models.ForeignKey(
+        FreightInvoice,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='settlements'
+    )
+    gross_freight_amount = models.DecimalField(max_digits=12, decimal_places=2)
+    commission_rate = models.DecimalField(max_digits=5, decimal_places=4, default=Decimal('0.0500'))
+    platform_commission_amount = models.DecimalField(max_digits=12, decimal_places=2)
+    transporter_net_payable = models.DecimalField(max_digits=12, decimal_places=2)
+    status = models.CharField(
+        max_length=30,
+        choices=SettlementStatus.choices,
+        default=SettlementStatus.PENDING,
+        db_index=True
+    )
+    settled_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Freight Settlement'
+        verbose_name_plural = 'Freight Settlements'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"Settlement for {self.shipment.tracking_number}: {self.gross_freight_amount} ETB ({self.status})"
+
+
+class Payment(models.Model):
+    """
+    Financial transaction record tracking payment initiation, verification, and status.
+    Enforces idempotency reference key.
+    """
+    idempotency_key = models.CharField(max_length=100, unique=True, db_index=True)
+    shipment = models.ForeignKey(
+        Shipment,
+        on_delete=models.CASCADE,
+        related_name='payments'
+    )
+    settlement = models.ForeignKey(
+        FreightSettlement,
+        on_delete=models.CASCADE,
+        related_name='payments'
+    )
+    payer = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='payments_made'
+    )
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    currency = models.CharField(max_length=10, default='ETB')
+    provider = models.CharField(max_length=50, default='MOCK')
+    provider_transaction_id = models.CharField(max_length=100, blank=True, db_index=True)
+    payment_method = models.CharField(max_length=50, default='MOCK_TRANSFER')
+    status = models.CharField(
+        max_length=20,
+        choices=PaymentStatus.choices,
+        default=PaymentStatus.PENDING,
+        db_index=True
+    )
+    initiated_at = models.DateTimeField(auto_now_add=True)
+    confirmed_at = models.DateTimeField(null=True, blank=True)
+    failed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Payment Transaction'
+        verbose_name_plural = 'Payment Transactions'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"Payment {self.idempotency_key} - {self.amount} {self.currency} ({self.status})"
+
+
+class PayoutStatus(models.TextChoices):
+    PENDING = 'PENDING', 'Pending Settlement'
+    SCHEDULED = 'SCHEDULED', 'Payout Scheduled'
+    PROCESSING = 'PROCESSING', 'Payout Processing'
+    PAID = 'PAID', 'Payout Transferred'
+    FAILED = 'FAILED', 'Payout Failed'
+    CANCELLED = 'CANCELLED', 'Cancelled'
+
+
+class TransporterPayout(models.Model):
+    """
+    Net payout record scheduled and processed for a Transporter following settlement.
+    """
+    settlement = models.ForeignKey(
+        FreightSettlement,
+        on_delete=models.CASCADE,
+        related_name='payouts'
+    )
+    transporter = models.ForeignKey(
+        TransporterProfile,
+        on_delete=models.CASCADE,
+        related_name='payouts'
+    )
+    gross_amount = models.DecimalField(max_digits=12, decimal_places=2)
+    commission_amount = models.DecimalField(max_digits=12, decimal_places=2)
+    net_payout_amount = models.DecimalField(max_digits=12, decimal_places=2)
+    status = models.CharField(
+        max_length=20,
+        choices=PayoutStatus.choices,
+        default=PayoutStatus.PENDING,
+        db_index=True
+    )
+    payout_reference = models.CharField(max_length=100, blank=True)
+    scheduled_at = models.DateTimeField(null=True, blank=True)
+    processed_at = models.DateTimeField(null=True, blank=True)
+    failure_reason = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Transporter Payout'
+        verbose_name_plural = 'Transporter Payouts'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"Payout {self.net_payout_amount} ETB to {self.transporter.company_name} ({self.status})"
+
+
+class PaymentDisputeStatus(models.TextChoices):
+    OPEN = 'OPEN', 'Dispute Open'
+    UNDER_REVIEW = 'UNDER_REVIEW', 'Under Review'
+    RESOLVED = 'RESOLVED', 'Dispute Resolved'
+    REJECTED = 'REJECTED', 'Dispute Rejected'
+    CANCELLED = 'CANCELLED', 'Cancelled'
+
+
+class PaymentDispute(models.Model):
+    """
+    Formal financial dispute raised regarding a payment transaction or settlement.
+    """
+    payment = models.ForeignKey(
+        Payment,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='disputes'
+    )
+    settlement = models.ForeignKey(
+        FreightSettlement,
+        on_delete=models.CASCADE,
+        related_name='disputes'
+    )
+    raised_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='disputes_raised'
+    )
+    reason = models.TextField()
+    status = models.CharField(
+        max_length=20,
+        choices=PaymentDisputeStatus.choices,
+        default=PaymentDisputeStatus.OPEN,
+        db_index=True
+    )
+    resolution_notes = models.TextField(blank=True)
+    resolved_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='disputes_resolved'
+    )
+    resolved_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Payment Dispute'
+        verbose_name_plural = 'Payment Disputes'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"Dispute on Settlement #{self.settlement.id} by {self.raised_by.email} ({self.status})"
 
 
 class Rating(models.Model):

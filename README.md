@@ -47,8 +47,7 @@ TradeFlow is a digital freight marketplace and logistics optimization platform c
 | `POST` | `/api/v1/loads/{id}/cancel/` | Cancel a posted cargo load | Load Owner / Admin |
 | `GET` | `/api/v1/loads/{id}/bids/` | View bids submitted on a cargo load | Load Owner / Transporter / Admin |
 | `POST` | `/api/v1/loads/{id}/bids/` | Submit a spot market bid on a load | **VERIFIED Transporters Only** |
-| `POST` | `/api/v1/bids/{id}/accept/` | Accept a winning bid (Atomic transaction: sets load `ASSIGNED`, winning bid `ACCEPTED`, competing bids `REJECTED`, initializes `Shipment`) | Load Owner Shipper / Admin |
-| `POST` | `/api/v1/bids/{id}/accept/` | Accept winning bid | Shipper / Admin |
+| `POST` | `/api/v1/bids/{id}/accept/` | Accept a winning bid (Atomic transaction) | Load Owner Shipper / Admin |
 | `POST` | `/api/v1/bids/{id}/withdraw/` | Withdraw a submitted bid | Transporter Owner |
 | `GET` | `/api/v1/bids/me/` | List all bids submitted by authenticated transporter | Transporter |
 
@@ -75,6 +74,25 @@ TradeFlow is a digital freight marketplace and logistics optimization platform c
 | `POST` | `/api/v1/pod/{id}/confirm/` | Confirm e-POD delivery (`CONFIRMED`) | Shipper Load Owner / Admin |
 | `POST` | `/api/v1/pod/{id}/dispute/` | Dispute e-POD delivery (`DISPUTED` with reason) | Shipper Load Owner / Admin |
 
+### 6. Payments & Freight Settlement (`/api/v1/`)
+| Method | Endpoint | Description | Auth / Role Required |
+| :--- | :--- | :--- | :--- |
+| `POST` | `/api/v1/payments/initiate/` | Initiate payment with idempotency key enforcement | Shipper Load Owner / Admin |
+| `GET` | `/api/v1/payments/` | List payment transactions | Participant / Admin |
+| `GET` | `/api/v1/payments/{id}/` | Get payment transaction details | Participant / Admin |
+| `POST` | `/api/v1/payments/{id}/verify/` | Verify payment status with payment provider | Participant / Admin |
+| `POST` | `/api/v1/payments/{id}/reconcile/` | Perform payment reconciliation check | **Admin Only** |
+| `GET` | `/api/v1/shipments/{id}/payments/` | Get payment transactions for a specific shipment | Participant / Admin |
+| `GET` | `/api/v1/invoices/` | List freight invoices | Participant / Admin |
+| `GET` | `/api/v1/invoices/{id}/` | Get freight invoice details | Participant / Admin |
+| `POST` | `/api/v1/settlements/create/` | Create freight settlement for completed shipment | Participant / Admin |
+| `GET` | `/api/v1/settlements/` | List freight settlements | Participant / Admin |
+| `GET` | `/api/v1/settlements/{id}/` | Get freight settlement details | Participant / Admin |
+| `POST` | `/api/v1/settlements/{id}/dispute/` | Raise a payment settlement dispute | Participant / Admin |
+| `GET` | `/api/v1/payouts/` | List transporter payouts | Transporter Owner / Admin |
+| `GET` | `/api/v1/payouts/{id}/` | Get payout details | Transporter Owner / Admin |
+| `POST` | `/api/v1/payouts/{id}/process/` | Process transporter payout transfer | **Admin Only** |
+
 ---
 
 ## Business & Security Rules
@@ -85,6 +103,8 @@ TradeFlow is a digital freight marketplace and logistics optimization platform c
 - **Document Management & File Validation**: Maximum file size 10MB; allowed extensions `.pdf`, `.png`, `.jpg`, `.jpeg`. Executables (`.exe`, `.sh`, `.bat`, etc.) rejected with `400 Bad Request`. Computes SHA-256 checksum deterministically.
 - **Protected Downloads**: Direct public file links are restricted; documents are downloaded via protected endpoint `GET /api/v1/documents/{id}/download/` enforcing participant authorization checks (`403 Forbidden` for non-participants).
 - **Digital Proof of Delivery (e-POD)**: Submitting an e-POD creates a `ProofOfDelivery` record in `SUBMITTED` state, automatically sets shipment status to `DELIVERED`, and logs a delivery `ShipmentMilestone`. Shippers can confirm (`CONFIRMED`) or dispute (`DISPUTED`) the delivery.
+- **Freight Settlement & Commission Calculation**: `SettlementService` computes platform commission (`gross_freight - platform_commission = transporter_net_payable`) using `Decimal` precision. Configurable commission rate (default 5%) stored on each settlement.
+- **Payment Provider Abstraction & Idempotency**: Payment provider logic isolated via `PaymentProvider` interface and `MockPaymentProvider` implementation. `POST /api/v1/payments/initiate/` enforces unique `idempotency_key` preventing duplicate transactions.
 
 ---
 
@@ -115,7 +135,7 @@ pipenv install --dev
 pipenv run python manage.py migrate
 ```
 
-### 5. Verify System Checks & Run Full Test Suite (66/66 Passed)
+### 5. Verify System Checks & Run Full Test Suite (74/74 Passed)
 ```bash
 pipenv run python manage.py check
 pipenv run pytest

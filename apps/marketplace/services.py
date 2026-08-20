@@ -1,11 +1,14 @@
 import os
 import hashlib
 import uuid
-from datetime import datetime
+from abc import ABC, abstractmethod
+from decimal import Decimal
+from datetime import date, datetime, timedelta
 from django.db import transaction
 from django.utils import timezone
 from django.core.files.storage import default_storage
-from rest_framework.exceptions import PermissionDenied, ValidationError
+from rest_framework.exceptions import PermissionDenied, ValidationError, NotFound
+
 from apps.accounts.models import Role, VerificationStatus, TransporterProfile, TransporterVerificationAudit, DriverProfile
 from apps.marketplace.models import (
     Vehicle,
@@ -22,6 +25,15 @@ from apps.marketplace.models import (
     CargoCondition,
     PODConfirmationStatus,
     ProofOfDelivery,
+    PaymentStatus,
+    FreightInvoice,
+    SettlementStatus,
+    FreightSettlement,
+    Payment,
+    PayoutStatus,
+    TransporterPayout,
+    PaymentDisputeStatus,
+    PaymentDispute,
 )
 
 
@@ -32,9 +44,6 @@ class VerificationService:
     @classmethod
 
     def verify_transporter(cls, transporter: TransporterProfile, admin_user, reason: str = ""):
-        """
-        Transitions a Transporter's verification status to VERIFIED with audit record.
-        """
         if not (admin_user.is_superuser or admin_user.role == Role.ADMIN or admin_user.is_staff):
             raise PermissionDenied("Only administrators can verify transporters.")
 
@@ -56,9 +65,6 @@ class VerificationService:
     @classmethod
 
     def suspend_transporter(cls, transporter: TransporterProfile, admin_user, reason: str = ""):
-        """
-        Transitions a Transporter's verification status to SUSPENDED with audit record.
-        """
         if not (admin_user.is_superuser or admin_user.role == Role.ADMIN or admin_user.is_staff):
             raise PermissionDenied("Only administrators can suspend transporters.")
 
@@ -80,11 +86,6 @@ class VerificationService:
     @classmethod
 
     def can_accept_load(cls, user_or_transporter) -> bool:
-        """
-        CRITICAL ACCEPTANCE CHECK:
-        Enforces that only VERIFIED transporters can accept bookings or loads.
-        Returns True if VERIFIED, False if PENDING or SUSPENDED.
-        """
         transporter = None
         if isinstance(user_or_transporter, TransporterProfile):
             transporter = user_or_transporter
@@ -103,9 +104,6 @@ class FleetService:
     @classmethod
 
     def add_vehicle(cls, transporter: TransporterProfile, vehicle_data: dict) -> Vehicle:
-        """
-        Adds a vehicle to a transporter's fleet.
-        """
         plate_number = vehicle_data.get('plate_number')
         if Vehicle.objects.filter(plate_number__iexact=plate_number).exists():
             raise ValidationError({'plate_number': 'A vehicle with this plate number already exists.'})
@@ -124,9 +122,6 @@ class LoadService:
     @classmethod
 
     def create_load(cls, shipper_profile, load_data: dict) -> CargoLoad:
-        """
-        Creates a new posted cargo load.
-        """
         return CargoLoad.objects.create(
             shipper=shipper_profile,
             **load_data
@@ -135,9 +130,6 @@ class LoadService:
     @classmethod
 
     def cancel_load(cls, load: CargoLoad, user) -> CargoLoad:
-        """
-        Cancels a posted load if not yet assigned or delivered.
-        """
         if not (user.is_superuser or user.role == Role.ADMIN or load.shipper.user == user):
             raise PermissionDenied("Only the load owner or an administrator can cancel this load.")
 
@@ -147,7 +139,6 @@ class LoadService:
         load.status = LoadStatus.CANCELLED
         load.save()
 
-        # Mark all pending bids as rejected
         load.bids.filter(status=BidStatus.SUBMITTED).update(status=BidStatus.REJECTED)
         return load
 
@@ -159,11 +150,6 @@ class BiddingService:
     @classmethod
 
     def submit_bid(cls, transporter_user, load: CargoLoad, bid_data: dict) -> Bid:
-        """
-        Submits a competitive spot market bid on a load.
-        Enforces transporter verification status check.
-        """
-        # CRITICAL VERIFICATION CHECK
         if not VerificationService.can_accept_load(transporter_user):
             raise PermissionDenied("Unverified or suspended transporters are not permitted to submit bids on loads.")
 
@@ -172,11 +158,9 @@ class BiddingService:
 
         transporter_profile = transporter_user.transporter_profile
 
-        # Check existing bid
         if Bid.objects.filter(load=load, transporter=transporter_profile).exists():
             raise ValidationError("You have already submitted a bid on this load.")
 
-        # Validate proposed vehicle
         proposed_vehicle = bid_data.get('proposed_vehicle')
         if proposed_vehicle:
             if proposed_vehicle.transporter != transporter_profile:
@@ -194,15 +178,6 @@ class BiddingService:
     @classmethod
 
     def accept_bid(cls, shipper_user, bid: Bid) -> CargoLoad:
-        """
-        ATOMIC BID ACCEPTANCE WORKFLOW:
-        - Validates shipper ownership.
-        - Updates winning bid to ACCEPTED.
-        - Updates all competing bids on load to REJECTED.
-        - Binds assigned transporter and vehicle to load.
-        - Sets load status to ASSIGNED.
-        - Automatically initializes Shipment execution record (Phase 6).
-        """
         load = bid.load
 
         if not (shipper_user.is_superuser or shipper_user.role == Role.ADMIN or load.shipper.user == shipper_user):
@@ -215,20 +190,16 @@ class BiddingService:
             raise ValidationError("Only submitted bids can be accepted.")
 
         with transaction.atomic():
-            # Update winning bid
             bid.status = BidStatus.ACCEPTED
             bid.save()
 
-            # Reject all other active bids on this load
             load.bids.filter(status=BidStatus.SUBMITTED).exclude(pk=bid.pk).update(status=BidStatus.REJECTED)
 
-            # Assign load to transporter
             load.status = LoadStatus.ASSIGNED
             load.assigned_transporter = bid.transporter
             load.assigned_vehicle = bid.proposed_vehicle
             load.save()
 
-            # PHASE 6 INTEGRATION: Initialize Shipment
             TrackingService.create_shipment_from_load(load)
 
         return load
@@ -236,9 +207,6 @@ class BiddingService:
     @classmethod
 
     def withdraw_bid(cls, transporter_user, bid: Bid) -> Bid:
-        """
-        Withdraws a pending bid submitted by a transporter.
-        """
         if not (transporter_user.is_superuser or transporter_user.role == Role.ADMIN or bid.transporter.user == transporter_user):
             raise PermissionDenied("Only the bidding transporter can withdraw this bid.")
 
@@ -257,9 +225,6 @@ class TrackingService:
     @classmethod
 
     def create_shipment_from_load(cls, load: CargoLoad, driver: DriverProfile = None) -> Shipment:
-        """
-        Creates a new Shipment execution record from an assigned load with unique tracking number.
-        """
         if hasattr(load, 'shipment'):
             return load.shipment
 
@@ -291,9 +256,6 @@ class TrackingService:
     @classmethod
 
     def assign_driver(cls, shipment: Shipment, driver: DriverProfile, user) -> Shipment:
-        """
-        Assigns a driver to an active shipment.
-        """
         if not (user.is_superuser or user.role == Role.ADMIN or shipment.transporter.user == user):
             raise PermissionDenied("Only the assigned transporter or an administrator can assign a driver.")
 
@@ -316,9 +278,6 @@ class TrackingService:
     @classmethod
 
     def update_status(cls, shipment: Shipment, new_status: str, user, location_name: str = "", notes: str = "") -> Shipment:
-        """
-        Updates shipment execution status and creates milestone audit entry.
-        """
         is_transporter = hasattr(user, 'transporter_profile') and shipment.transporter == user.transporter_profile
         is_driver = hasattr(user, 'driver_profile') and shipment.driver == user.driver_profile
         is_admin = user.is_superuser or user.role == Role.ADMIN
@@ -347,9 +306,6 @@ class TrackingService:
     @classmethod
 
     def record_location(cls, shipment: Shipment, latitude: float, longitude: float, speed_kmh: float = None, heading_degrees: float = None, location_name: str = "", user=None) -> LocationUpdate:
-        """
-        Records a real-time GPS telemetry ping for a shipment in transit.
-        """
         location_update = LocationUpdate.objects.create(
             shipment=shipment,
             latitude=latitude,
@@ -361,10 +317,6 @@ class TrackingService:
         )
         return location_update
 
-
-# ============================================================================
-# PHASE 7: DOCUMENT MANAGEMENT & DIGITAL PROOF OF DELIVERY (e-POD) SERVICES
-# ============================================================================
 
 ALLOWED_EXTENSIONS = ['.pdf', '.png', '.jpg', '.jpeg']
 DISALLOWED_EXTENSIONS = ['.exe', '.sh', '.bat', '.py', '.js', '.php', '.bin', '.cmd']
@@ -378,11 +330,6 @@ class DocumentService:
     @classmethod
 
     def upload_document(cls, shipment: Shipment, file_obj, document_type: str, user, notes: str = "") -> ShipmentDocument:
-        """
-        Validates file size (max 10MB), white-listed extension, calculates SHA-256 checksum,
-        and saves ShipmentDocument record.
-        """
-        # Validate participant authorization
         is_shipper = hasattr(user, 'shipper_profile') and shipment.load.shipper == user.shipper_profile
         is_transporter = hasattr(user, 'transporter_profile') and shipment.transporter == user.transporter_profile
         is_driver = hasattr(user, 'driver_profile') and shipment.driver == user.driver_profile
@@ -391,25 +338,20 @@ class DocumentService:
         if not (is_shipper or is_transporter or is_driver or is_admin):
             raise PermissionDenied("Only shipment participants or administrators can upload documents for this shipment.")
 
-        # Sanitize filename & extract extension
         raw_name = os.path.basename(file_obj.name)
         ext = os.path.splitext(raw_name)[1].lower()
 
         if ext in DISALLOWED_EXTENSIONS or ext not in ALLOWED_EXTENSIONS:
             raise ValidationError({'file': f"File extension '{ext}' is not permitted. Allowed extensions: {', '.join(ALLOWED_EXTENSIONS)}"})
 
-        # Validate file size
         file_size = file_obj.size
         if file_size > MAX_FILE_SIZE_BYTES:
             raise ValidationError({'file': f"File size ({file_size} bytes) exceeds maximum limit of 10 MB."})
 
-        # Calculate SHA-256 checksum deterministically
         hasher = hashlib.sha256()
         for chunk in file_obj.chunks():
             hasher.update(chunk)
         checksum_sha256 = hasher.hexdigest()
-
-        # Reset file pointer after reading chunks
         file_obj.seek(0)
 
         mime_type = getattr(file_obj, 'content_type', 'application/octet-stream')
@@ -425,20 +367,14 @@ class DocumentService:
             uploaded_by=user,
             notes=notes
         )
-
         return document
 
     @classmethod
 
     def delete_document(cls, document: ShipmentDocument, user):
-        """
-        Removes physical file and deletes document DB record.
-        Restricted to uploader or Admin.
-        """
         if not (user.is_superuser or user.role == Role.ADMIN or document.uploaded_by == user):
             raise PermissionDenied("Only the document uploader or an administrator can delete this document.")
 
-        # Remove physical file safely
         if document.file and default_storage.exists(document.file.name):
             default_storage.delete(document.file.name)
 
@@ -452,10 +388,6 @@ class PODService:
     @classmethod
 
     def create_pod(cls, shipment: Shipment, driver_user, pod_data: dict) -> ProofOfDelivery:
-        """
-        Creates e-POD in SUBMITTED state and transitions shipment status to DELIVERED.
-        """
-        # Validate authorization
         is_transporter = hasattr(driver_user, 'transporter_profile') and shipment.transporter == driver_user.transporter_profile
         is_driver = hasattr(driver_user, 'driver_profile') and shipment.driver == driver_user.driver_profile
         is_admin = driver_user.is_superuser or driver_user.role == Role.ADMIN
@@ -476,7 +408,6 @@ class PODService:
                 **pod_data
             )
 
-            # Transition shipment to DELIVERED status via TrackingService
             if shipment.status != ShipmentStatus.DELIVERED:
                 TrackingService.update_status(
                     shipment=shipment,
@@ -491,9 +422,6 @@ class PODService:
     @classmethod
 
     def confirm_pod(cls, pod: ProofOfDelivery, shipper_user) -> ProofOfDelivery:
-        """
-        Shipper confirms e-POD delivery. Sets status to CONFIRMED.
-        """
         load_shipper = pod.shipment.load.shipper
         if not (shipper_user.is_superuser or shipper_user.role == Role.ADMIN or load_shipper.user == shipper_user):
             raise PermissionDenied("Only the load-owning shipper or an administrator can confirm Proof of Delivery.")
@@ -512,9 +440,6 @@ class PODService:
     @classmethod
 
     def dispute_pod(cls, pod: ProofOfDelivery, shipper_user, dispute_reason: str) -> ProofOfDelivery:
-        """
-        Shipper disputes e-POD delivery with dispute reason.
-        """
         load_shipper = pod.shipment.load.shipper
         if not (shipper_user.is_superuser or shipper_user.role == Role.ADMIN or load_shipper.user == shipper_user):
             raise PermissionDenied("Only the load-owning shipper or an administrator can dispute Proof of Delivery.")
@@ -530,7 +455,6 @@ class PODService:
             pod.dispute_reason = dispute_reason.strip()
             pod.save()
 
-            # Record milestone audit for dispute
             ShipmentMilestone.objects.create(
                 shipment=pod.shipment,
                 status=pod.shipment.status,
@@ -540,3 +464,341 @@ class PODService:
             )
 
         return pod
+
+
+# ============================================================================
+# PHASE 8: PAYMENT PROVIDER ABSTRACTION & FREIGHT SETTLEMENT SERVICES (FR-10)
+# ============================================================================
+
+class PaymentProvider(ABC):
+    """
+    Abstract interface for payment gateway providers. Isolates domain logic
+    from external payment implementations (Telebirr, Mobile Money, Banks).
+    """
+    @abstractmethod
+    def initiate_payment(self, reference_id: str, amount: Decimal, currency: str, payer_info: dict) -> dict:
+        pass
+
+    @abstractmethod
+    def verify_payment(self, provider_transaction_id: str) -> dict:
+        pass
+
+    @abstractmethod
+    def get_transaction_status(self, provider_transaction_id: str) -> str:
+        pass
+
+
+class MockPaymentProvider(PaymentProvider):
+    """
+    Deterministic Mock Payment Provider for local development & automated testing.
+    """
+    def initiate_payment(self, reference_id: str, amount: Decimal, currency: str, payer_info: dict) -> dict:
+        return {
+            "status": PaymentStatus.SUCCEEDED,
+            "provider_transaction_id": f"MOCK-TXN-{reference_id}",
+            "amount": amount,
+            "currency": currency,
+            "message": "Mock payment successfully processed."
+        }
+
+    def verify_payment(self, provider_transaction_id: str) -> dict:
+        return {
+            "status": PaymentStatus.SUCCEEDED,
+            "provider_transaction_id": provider_transaction_id,
+            "verified": True
+        }
+
+    def get_transaction_status(self, provider_transaction_id: str) -> str:
+        return PaymentStatus.SUCCEEDED
+
+
+class InvoiceService:
+    """
+    Domain service for freight invoicing.
+    """
+    @classmethod
+
+    def generate_invoice(cls, shipment: Shipment, issuer_user=None) -> FreightInvoice:
+        if shipment.invoices.filter(status__in=[PaymentStatus.PENDING, PaymentStatus.SUCCEEDED]).exists():
+            return shipment.invoices.filter(status__in=[PaymentStatus.PENDING, PaymentStatus.SUCCEEDED]).first()
+
+        accepted_bids = shipment.load.bids.filter(status=BidStatus.ACCEPTED)
+        if accepted_bids.exists():
+            amount = accepted_bids.first().amount
+        else:
+            amount = shipment.load.target_price
+
+        date_str = timezone.now().strftime("%Y%m%d")
+        unique_suffix = str(uuid.uuid4().hex[:4]).upper()
+        invoice_number = f"INV-{date_str}-{shipment.id:04d}-{unique_suffix}"
+
+        due_date = date.today() + timedelta(days=7)
+
+        invoice = FreightInvoice.objects.create(
+            invoice_number=invoice_number,
+            shipment=shipment,
+            issuer=issuer_user or shipment.transporter.user,
+            payer=shipment.load.shipper.user,
+            subtotal_amount=amount,
+            commission_amount=Decimal('0.00'),
+            total_amount=amount,
+            currency='ETB',
+            status=PaymentStatus.PENDING,
+            due_date=due_date,
+            notes=f"Freight invoice for shipment {shipment.tracking_number} ({shipment.origin} -> {shipment.destination})"
+        )
+        return invoice
+
+
+class SettlementService:
+    """
+    Domain service for freight settlement, calculating gross freight, platform commission,
+    transporter net payable, and enforcing e-POD delivery verification.
+    """
+    DEFAULT_COMMISSION_RATE = Decimal('0.0500')  # Configurable 5% platform commission
+
+    @classmethod
+
+    def create_settlement_for_shipment(cls, shipment: Shipment, commission_rate: Decimal = None) -> FreightSettlement:
+        if hasattr(shipment, 'settlement'):
+            return shipment.settlement
+
+        if commission_rate is None:
+            commission_rate = cls.DEFAULT_COMMISSION_RATE
+
+        accepted_bids = shipment.load.bids.filter(status=BidStatus.ACCEPTED)
+        if accepted_bids.exists():
+            gross_amount = accepted_bids.first().amount
+        else:
+            gross_amount = shipment.load.target_price
+
+        # Decimal arithmetic
+        commission_amount = (gross_amount * commission_rate).quantize(Decimal('0.01'))
+        net_payable = gross_amount - commission_amount
+
+        invoice = InvoiceService.generate_invoice(shipment)
+
+        # Check e-POD delivery readiness
+        is_ready = shipment.status == ShipmentStatus.DELIVERED and hasattr(shipment, 'pod')
+        initial_status = SettlementStatus.READY if is_ready else SettlementStatus.PENDING
+
+        settlement = FreightSettlement.objects.create(
+            shipment=shipment,
+            invoice=invoice,
+            gross_freight_amount=gross_amount,
+            commission_rate=commission_rate,
+            platform_commission_amount=commission_amount,
+            transporter_net_payable=net_payable,
+            status=initial_status
+        )
+        return settlement
+
+
+class PaymentService:
+    """
+    Domain service managing payment initiation, idempotency checks, and confirmation.
+    """
+    @classmethod
+
+    def initiate_payment(cls, settlement: FreightSettlement, payer_user, idempotency_key: str, provider_name: str = "MOCK") -> Payment:
+        # Authorization check
+        is_shipper = hasattr(payer_user, 'shipper_profile') and settlement.shipment.load.shipper == payer_user.shipper_profile
+        is_admin = payer_user.is_superuser or payer_user.role == Role.ADMIN
+
+        if not (is_shipper or is_admin):
+            raise PermissionDenied("Only the load-owning shipper or an administrator can initiate payment for this settlement.")
+
+        if settlement.gross_freight_amount <= 0:
+            raise ValidationError("Settlement amount must be greater than 0 ETB.")
+
+        # Idempotency Check
+        existing_payment = Payment.objects.filter(idempotency_key=idempotency_key).first()
+        if existing_payment:
+            return existing_payment
+
+        provider = MockPaymentProvider()
+
+        with transaction.atomic():
+            payment = Payment.objects.create(
+                idempotency_key=idempotency_key,
+                shipment=settlement.shipment,
+                settlement=settlement,
+                payer=payer_user,
+                amount=settlement.gross_freight_amount,
+                currency='ETB',
+                provider=provider_name,
+                payment_method='MOCK_TRANSFER',
+                status=PaymentStatus.INITIATED
+            )
+
+            # Invoke payment provider
+            res = provider.initiate_payment(
+                reference_id=idempotency_key,
+                amount=payment.amount,
+                currency=payment.currency,
+                payer_info={"email": payer_user.email}
+            )
+
+            payment.provider_transaction_id = res['provider_transaction_id']
+            payment.status = res['status']
+            if res['status'] == PaymentStatus.SUCCEEDED:
+                payment.confirmed_at = timezone.now()
+                # Update settlement status to PAID (escrow state)
+                settlement.status = SettlementStatus.PAID
+                settlement.save()
+                if settlement.invoice:
+                    settlement.invoice.status = PaymentStatus.SUCCEEDED
+                    settlement.invoice.paid_date = timezone.now()
+                    settlement.invoice.save()
+
+                # Schedule transporter payout
+                PayoutService.schedule_payout(settlement)
+
+            payment.save()
+
+        return payment
+
+    @classmethod
+
+    def verify_and_confirm_payment(cls, payment: Payment, user) -> Payment:
+        provider = MockPaymentProvider()
+        res = provider.verify_payment(payment.provider_transaction_id or payment.idempotency_key)
+
+        with transaction.atomic():
+            if res['verified']:
+                payment.status = PaymentStatus.SUCCEEDED
+                payment.confirmed_at = timezone.now()
+                payment.save()
+
+                settlement = payment.settlement
+                settlement.status = SettlementStatus.PAID
+                settlement.save()
+
+                PayoutService.schedule_payout(settlement)
+
+        return payment
+
+
+class ReconciliationService:
+    """
+    Domain service for financial reconciliation comparing internal payment records against provider status.
+    """
+    @classmethod
+
+    def reconcile_payment(cls, payment: Payment) -> dict:
+        provider = MockPaymentProvider()
+        provider_status = provider.get_transaction_status(payment.provider_transaction_id)
+
+        if not payment.provider_transaction_id:
+            outcome = "MISSING_PROVIDER_TRANSACTION"
+        elif payment.status == provider_status:
+            outcome = "MATCHED"
+        else:
+            outcome = "STATUS_MISMATCH"
+
+        return {
+            "payment_id": payment.id,
+            "idempotency_key": payment.idempotency_key,
+            "internal_status": payment.status,
+            "provider_status": provider_status,
+            "reconciliation_outcome": outcome,
+            "reconciled_at": timezone.now()
+        }
+
+
+class PayoutService:
+    """
+    Domain service for scheduling and processing transporter payouts.
+    """
+    @classmethod
+
+    def schedule_payout(cls, settlement: FreightSettlement) -> TransporterPayout:
+        if hasattr(settlement, 'payouts') and settlement.payouts.filter(status__in=[PayoutStatus.SCHEDULED, PayoutStatus.PAID]).exists():
+            return settlement.payouts.filter(status__in=[PayoutStatus.SCHEDULED, PayoutStatus.PAID]).first()
+
+        payout = TransporterPayout.objects.create(
+            settlement=settlement,
+            transporter=settlement.shipment.transporter,
+            gross_amount=settlement.gross_freight_amount,
+            commission_amount=settlement.platform_commission_amount,
+            net_payout_amount=settlement.transporter_net_payable,
+            status=PayoutStatus.SCHEDULED,
+            payout_reference=f"PAYOUT-MOCK-{uuid.uuid4().hex[:6].upper()}",
+            scheduled_at=timezone.now()
+        )
+        return payout
+
+    @classmethod
+
+    def process_payout(cls, payout: TransporterPayout, admin_user) -> TransporterPayout:
+        if not (admin_user.is_superuser or admin_user.role == Role.ADMIN or admin_user.is_staff):
+            raise PermissionDenied("Only administrators can process transporter payouts.")
+
+        if payout.status == PayoutStatus.PAID:
+            return payout
+
+        with transaction.atomic():
+            payout.status = PayoutStatus.PAID
+            payout.processed_at = timezone.now()
+            payout.save()
+
+            settlement = payout.settlement
+            settlement.status = SettlementStatus.SETTLED
+            settlement.settled_at = timezone.now()
+            settlement.save()
+
+        return payout
+
+
+class DisputeService:
+    """
+    Domain service managing payment settlement disputes.
+    """
+    @classmethod
+
+    def raise_dispute(cls, settlement: FreightSettlement, user, reason: str, payment: Payment = None) -> PaymentDispute:
+        is_shipper = hasattr(user, 'shipper_profile') and settlement.shipment.load.shipper == user.shipper_profile
+        is_transporter = hasattr(user, 'transporter_profile') and settlement.shipment.transporter == user.transporter_profile
+        is_admin = user.is_superuser or user.role == Role.ADMIN
+
+        if not (is_shipper or is_transporter or is_admin):
+            raise PermissionDenied("Only settlement participants or administrators can raise a dispute.")
+
+        if not reason.strip():
+            raise ValidationError({'reason': 'A reason is required to open a dispute.'})
+
+        with transaction.atomic():
+            dispute = PaymentDispute.objects.create(
+                payment=payment,
+                settlement=settlement,
+                raised_by=user,
+                reason=reason.strip(),
+                status=PaymentDisputeStatus.OPEN
+            )
+
+            settlement.status = SettlementStatus.DISPUTED
+            settlement.save()
+
+        return dispute
+
+    @classmethod
+
+    def resolve_dispute(cls, dispute: PaymentDispute, admin_user, resolution_notes: str, new_status: str = PaymentDisputeStatus.RESOLVED) -> PaymentDispute:
+        if not (admin_user.is_superuser or admin_user.role == Role.ADMIN or admin_user.is_staff):
+            raise PermissionDenied("Only administrators can resolve financial disputes.")
+
+        if not resolution_notes.strip():
+            raise ValidationError({'resolution_notes': 'Resolution notes are required.'})
+
+        with transaction.atomic():
+            dispute.status = new_status
+            dispute.resolution_notes = resolution_notes.strip()
+            dispute.resolved_by = admin_user
+            dispute.resolved_at = timezone.now()
+            dispute.save()
+
+            if new_status == PaymentDisputeStatus.RESOLVED:
+                dispute.settlement.status = SettlementStatus.READY
+                dispute.settlement.save()
+
+        return dispute
