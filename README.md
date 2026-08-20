@@ -1,0 +1,115 @@
+# TradeFlow — Intelligent Logistics & Freight Matching Platform
+
+TradeFlow is a digital freight marketplace and logistics optimization platform connecting cargo owners, transporters, and freight forwarders along Ethiopia's principal trade corridors (Djibouti Port → Modjo Dry Port → regional hubs).
+
+---
+
+## Technical Stack & Architecture
+
+- **Backend Framework**: Python 3.13, Django 5.x, Django REST Framework
+- **Authentication**: JWT (JSON Web Tokens via `djangorestframework-simplejwt`)
+- **Database**: PostgreSQL (managed locally)
+- **Cache & Message Broker**: Redis (managed locally)
+- **Asynchronous Tasks**: Celery & Redis
+- **Real-Time WebSockets**: Django Channels & Redis
+- **Documentation**: OpenAPI 3.0 via `drf-spectacular`
+
+---
+
+## API Endpoints
+
+### 1. Authentication (`/api/v1/auth/`)
+| Method | Endpoint | Description | Auth Required |
+| :--- | :--- | :--- | :--- |
+| `POST` | `/api/v1/auth/register/` | Register user (`SHIPPER`, `TRANSPORTER`, `DRIVER`, etc.) and initialize profile | Public |
+| `POST` | `/api/v1/auth/login/` | Obtain JWT token pair (`access` & `refresh`) | Public |
+| `POST` | `/api/v1/auth/refresh/` | Obtain new access token using refresh token | Public |
+| `GET` | `/api/v1/auth/me/` | Retrieve authenticated user profile & role details | `Bearer <token>` |
+| `PATCH`| `/api/v1/auth/me/` | Update user profile fields | `Bearer <token>` |
+
+### 2. Marketplace, Fleet & Onboarding (`/api/v1/`)
+| Method | Endpoint | Description | Auth / Role Required |
+| :--- | :--- | :--- | :--- |
+| `GET` | `/api/v1/transporters/` | List marketplace transporters (Admins see all; Shippers see verified) | Authenticated |
+| `GET` | `/api/v1/transporters/me/` | View current transporter profile and verification status | Transporter |
+| `GET/POST` | `/api/v1/transporters/me/vehicles/` | List or add fleet vehicles owned by transporter | Transporter |
+| `GET/PATCH/DELETE` | `/api/v1/transporters/me/vehicles/{id}/` | Manage fleet vehicle | Vehicle Owner / Admin |
+| `POST` | `/api/v1/transporters/{id}/verification/` | Verify or suspend a transporter with reason | **Admin Only** |
+| `GET` | `/api/v1/transporters/{id}/verification/history/` | View verification audit trail for transporter | **Admin Only** |
+| `GET/POST` | `/api/v1/ratings/` | List and submit post-trip marketplace ratings | Authenticated |
+
+### 3. Cargo Loads & Spot Market Bidding (`/api/v1/`)
+| Method | Endpoint | Description | Auth / Role Required |
+| :--- | :--- | :--- | :--- |
+| `GET` | `/api/v1/loads/` | List spot market loads (filter by `origin`, `destination`, `required_vehicle_type`, `status`) | Authenticated |
+| `POST` | `/api/v1/loads/` | Post a new cargo load | Shipper / Admin |
+| `GET/PATCH` | `/api/v1/loads/{id}/` | View or update cargo load details | Load Owner / Admin |
+| `POST` | `/api/v1/loads/{id}/cancel/` | Cancel a posted cargo load | Load Owner / Admin |
+| `GET` | `/api/v1/loads/{id}/bids/` | View bids submitted on a cargo load | Load Owner / Transporter / Admin |
+| `POST` | `/api/v1/loads/{id}/bids/` | Submit a spot market bid on a load | **VERIFIED Transporters Only** |
+| `POST` | `/api/v1/bids/{id}/accept/` | Accept a winning bid (Atomic transaction: sets load `ASSIGNED`, winning bid `ACCEPTED`, competing bids `REJECTED`, initializes `Shipment`) | Load Owner Shipper / Admin |
+| `POST` | `/api/v1/bids/{id}/withdraw/` | Withdraw a submitted bid | Transporter Owner |
+| `GET` | `/api/v1/bids/me/` | List all bids submitted by authenticated transporter | Transporter |
+
+### 4. Shipments & Real-Time GPS Tracking (`/api/v1/`)
+| Method | Endpoint | Description | Auth / Role Required |
+| :--- | :--- | :--- | :--- |
+| `GET` | `/api/v1/shipments/` | List active corridor shipments | Shipment Participant / Admin |
+| `GET` | `/api/v1/shipments/{id}/` | Get shipment details with latest location & status | Shipment Participant / Admin |
+| `POST` | `/api/v1/shipments/{id}/assign-driver/` | Assign a driver to an active shipment | Transporter Owner / Admin |
+| `POST` | `/api/v1/shipments/{id}/status/` | Update shipment status (`AT_PICKUP`, `IN_TRANSIT`, `DELIVERED`) with milestone log | Assigned Driver / Transporter / Admin |
+| `POST` | `/api/v1/shipments/{id}/location/` | Submit GPS telemetry ping for shipment in transit | Assigned Driver / Transporter / Admin |
+| `GET` | `/api/v1/shipments/{id}/tracking/` | View complete GPS location history & milestone audit trail | Shipment Participant / Admin |
+
+---
+
+## Business & Security Rules
+
+- **Spot Market Bidding Eligibility**: Only `VERIFIED` transporters can submit bids (`IsTransporterVerified` & `VerificationService.can_accept_load()`). Unverified (`PENDING` or `SUSPENDED`) transporters receive `403 Forbidden`.
+- **Atomic Bid Acceptance**: Executed via `transaction.atomic()`. Accepting a bid atomically updates load status to `ASSIGNED`, assigns winning transporter & vehicle, marks winning bid `ACCEPTED`, rejects competing bids, and initializes a `Shipment` record with a unique tracking number (`TRK-...`).
+- **Real-Time GPS & Milestone Auditing**: Status transitions log `ShipmentMilestone` records. Telemetry pings capture latitude, longitude, speed (km/h), heading, and location name.
+
+---
+
+## Local Development Setup
+
+### 1. Prerequisites
+Ensure the following services are installed and running locally on your Windows machine:
+- **Python**: 3.13
+- **Pipenv**: Installed in Python 3.13 environment
+- **PostgreSQL**: Running on `localhost:5432` with database `tradeflow` created
+- **Redis**: Running on `localhost:6379`
+
+### 2. Environment Configuration
+Copy `.env.example` to `.env` and set your local PostgreSQL credentials:
+
+```bash
+# Set your local PostgreSQL password in .env
+DB_PASSWORD=your_actual_postgres_password
+```
+
+### 3. Install Dependencies
+```bash
+pipenv install --dev
+```
+
+### 4. Run Database Migrations
+```bash
+pipenv run python manage.py migrate
+```
+
+### 5. Verify System Checks & Run Full Test Suite (52/52 Passed)
+```bash
+pipenv run python manage.py check
+pipenv run pytest
+```
+
+### 6. Start the Backend Development Server
+```bash
+pipenv run python manage.py runserver 8000
+```
+
+### 7. Interactive API Documentation (OpenAPI / Swagger)
+Once the server is running, visit:
+- **Swagger UI**: `http://127.0.0.1:8000/api/docs/`
+- **OpenAPI Schema**: `http://127.0.0.1:8000/api/schema/`
