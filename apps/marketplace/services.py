@@ -1,7 +1,10 @@
+import os
+import hashlib
 import uuid
 from datetime import datetime
 from django.db import transaction
 from django.utils import timezone
+from django.core.files.storage import default_storage
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from apps.accounts.models import Role, VerificationStatus, TransporterProfile, TransporterVerificationAudit, DriverProfile
 from apps.marketplace.models import (
@@ -14,6 +17,11 @@ from apps.marketplace.models import (
     ShipmentStatus,
     LocationUpdate,
     ShipmentMilestone,
+    DocumentType,
+    ShipmentDocument,
+    CargoCondition,
+    PODConfirmationStatus,
+    ProofOfDelivery,
 )
 
 
@@ -311,19 +319,18 @@ class TrackingService:
         """
         Updates shipment execution status and creates milestone audit entry.
         """
-        # Verification authorization check
         is_transporter = hasattr(user, 'transporter_profile') and shipment.transporter == user.transporter_profile
         is_driver = hasattr(user, 'driver_profile') and shipment.driver == user.driver_profile
         is_admin = user.is_superuser or user.role == Role.ADMIN
 
-        if not (is_transporter or is_driver or is_admin):
+        if not (is_transporter or is_driver or is_admin or user == shipment.load.shipper.user):
             raise PermissionDenied("Only the assigned driver, transporter, or an administrator can update shipment status.")
 
         with transaction.atomic():
             shipment.status = new_status
             if new_status in [ShipmentStatus.AT_PICKUP, ShipmentStatus.IN_TRANSIT] and not shipment.actual_pickup_time:
                 shipment.actual_pickup_time = timezone.now()
-            elif new_status == ShipmentStatus.DELIVERED:
+            elif new_status == ShipmentStatus.DELIVERED and not shipment.actual_delivery_time:
                 shipment.actual_delivery_time = timezone.now()
             shipment.save()
 
@@ -353,3 +360,183 @@ class TrackingService:
             recorded_by=user
         )
         return location_update
+
+
+# ============================================================================
+# PHASE 7: DOCUMENT MANAGEMENT & DIGITAL PROOF OF DELIVERY (e-POD) SERVICES
+# ============================================================================
+
+ALLOWED_EXTENSIONS = ['.pdf', '.png', '.jpg', '.jpeg']
+DISALLOWED_EXTENSIONS = ['.exe', '.sh', '.bat', '.py', '.js', '.php', '.bin', '.cmd']
+MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024  # 10 MB
+
+
+class DocumentService:
+    """
+    Domain service for shipment logistics document upload, validation, and deletion.
+    """
+    @classmethod
+
+    def upload_document(cls, shipment: Shipment, file_obj, document_type: str, user, notes: str = "") -> ShipmentDocument:
+        """
+        Validates file size (max 10MB), white-listed extension, calculates SHA-256 checksum,
+        and saves ShipmentDocument record.
+        """
+        # Validate participant authorization
+        is_shipper = hasattr(user, 'shipper_profile') and shipment.load.shipper == user.shipper_profile
+        is_transporter = hasattr(user, 'transporter_profile') and shipment.transporter == user.transporter_profile
+        is_driver = hasattr(user, 'driver_profile') and shipment.driver == user.driver_profile
+        is_admin = user.is_superuser or user.role == Role.ADMIN
+
+        if not (is_shipper or is_transporter or is_driver or is_admin):
+            raise PermissionDenied("Only shipment participants or administrators can upload documents for this shipment.")
+
+        # Sanitize filename & extract extension
+        raw_name = os.path.basename(file_obj.name)
+        ext = os.path.splitext(raw_name)[1].lower()
+
+        if ext in DISALLOWED_EXTENSIONS or ext not in ALLOWED_EXTENSIONS:
+            raise ValidationError({'file': f"File extension '{ext}' is not permitted. Allowed extensions: {', '.join(ALLOWED_EXTENSIONS)}"})
+
+        # Validate file size
+        file_size = file_obj.size
+        if file_size > MAX_FILE_SIZE_BYTES:
+            raise ValidationError({'file': f"File size ({file_size} bytes) exceeds maximum limit of 10 MB."})
+
+        # Calculate SHA-256 checksum deterministically
+        hasher = hashlib.sha256()
+        for chunk in file_obj.chunks():
+            hasher.update(chunk)
+        checksum_sha256 = hasher.hexdigest()
+
+        # Reset file pointer after reading chunks
+        file_obj.seek(0)
+
+        mime_type = getattr(file_obj, 'content_type', 'application/octet-stream')
+
+        document = ShipmentDocument.objects.create(
+            shipment=shipment,
+            document_type=document_type,
+            file=file_obj,
+            file_name=raw_name,
+            file_size_bytes=file_size,
+            mime_type=mime_type,
+            checksum_sha256=checksum_sha256,
+            uploaded_by=user,
+            notes=notes
+        )
+
+        return document
+
+    @classmethod
+
+    def delete_document(cls, document: ShipmentDocument, user):
+        """
+        Removes physical file and deletes document DB record.
+        Restricted to uploader or Admin.
+        """
+        if not (user.is_superuser or user.role == Role.ADMIN or document.uploaded_by == user):
+            raise PermissionDenied("Only the document uploader or an administrator can delete this document.")
+
+        # Remove physical file safely
+        if document.file and default_storage.exists(document.file.name):
+            default_storage.delete(document.file.name)
+
+        document.delete()
+
+
+class PODService:
+    """
+    Domain service managing Digital Proof of Delivery (e-POD), delivery confirmation, and disputes.
+    """
+    @classmethod
+
+    def create_pod(cls, shipment: Shipment, driver_user, pod_data: dict) -> ProofOfDelivery:
+        """
+        Creates e-POD in SUBMITTED state and transitions shipment status to DELIVERED.
+        """
+        # Validate authorization
+        is_transporter = hasattr(driver_user, 'transporter_profile') and shipment.transporter == driver_user.transporter_profile
+        is_driver = hasattr(driver_user, 'driver_profile') and shipment.driver == driver_user.driver_profile
+        is_admin = driver_user.is_superuser or driver_user.role == Role.ADMIN
+
+        if not (is_transporter or is_driver or is_admin):
+            raise PermissionDenied("Only the assigned driver, transporter, or an administrator can submit Proof of Delivery.")
+
+        if hasattr(shipment, 'pod'):
+            raise ValidationError("A Proof of Delivery has already been submitted for this shipment.")
+
+        driver_profile = getattr(driver_user, 'driver_profile', None)
+
+        with transaction.atomic():
+            pod = ProofOfDelivery.objects.create(
+                shipment=shipment,
+                delivered_by_driver=driver_profile,
+                confirmation_status=PODConfirmationStatus.SUBMITTED,
+                **pod_data
+            )
+
+            # Transition shipment to DELIVERED status via TrackingService
+            if shipment.status != ShipmentStatus.DELIVERED:
+                TrackingService.update_status(
+                    shipment=shipment,
+                    new_status=ShipmentStatus.DELIVERED,
+                    user=driver_user,
+                    location_name=pod_data.get('delivery_location', shipment.destination),
+                    notes=f"Digital Proof of Delivery submitted by {driver_user.get_full_name()}."
+                )
+
+        return pod
+
+    @classmethod
+
+    def confirm_pod(cls, pod: ProofOfDelivery, shipper_user) -> ProofOfDelivery:
+        """
+        Shipper confirms e-POD delivery. Sets status to CONFIRMED.
+        """
+        load_shipper = pod.shipment.load.shipper
+        if not (shipper_user.is_superuser or shipper_user.role == Role.ADMIN or load_shipper.user == shipper_user):
+            raise PermissionDenied("Only the load-owning shipper or an administrator can confirm Proof of Delivery.")
+
+        if pod.confirmation_status == PODConfirmationStatus.CONFIRMED:
+            return pod
+
+        with transaction.atomic():
+            pod.confirmation_status = PODConfirmationStatus.CONFIRMED
+            pod.confirmed_by_shipper = shipper_user
+            pod.confirmed_at = timezone.now()
+            pod.save()
+
+        return pod
+
+    @classmethod
+
+    def dispute_pod(cls, pod: ProofOfDelivery, shipper_user, dispute_reason: str) -> ProofOfDelivery:
+        """
+        Shipper disputes e-POD delivery with dispute reason.
+        """
+        load_shipper = pod.shipment.load.shipper
+        if not (shipper_user.is_superuser or shipper_user.role == Role.ADMIN or load_shipper.user == shipper_user):
+            raise PermissionDenied("Only the load-owning shipper or an administrator can dispute Proof of Delivery.")
+
+        if not dispute_reason.strip():
+            raise ValidationError({'dispute_reason': 'A dispute reason is required when disputing delivery.'})
+
+        if pod.confirmation_status == PODConfirmationStatus.CONFIRMED:
+            raise ValidationError("A confirmed Proof of Delivery cannot be disputed.")
+
+        with transaction.atomic():
+            pod.confirmation_status = PODConfirmationStatus.DISPUTED
+            pod.dispute_reason = dispute_reason.strip()
+            pod.save()
+
+            # Record milestone audit for dispute
+            ShipmentMilestone.objects.create(
+                shipment=pod.shipment,
+                status=pod.shipment.status,
+                location_name=pod.delivery_location,
+                notes=f"Delivery DISPUTED by Shipper: {dispute_reason}",
+                updated_by=shipper_user
+            )
+
+        return pod

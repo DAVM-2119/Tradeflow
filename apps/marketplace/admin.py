@@ -1,5 +1,15 @@
 from django.contrib import admin
-from apps.marketplace.models import Vehicle, CargoLoad, Bid, Shipment, LocationUpdate, ShipmentMilestone, Rating
+from apps.marketplace.models import (
+    Vehicle,
+    CargoLoad,
+    Bid,
+    Shipment,
+    LocationUpdate,
+    ShipmentMilestone,
+    ShipmentDocument,
+    ProofOfDelivery,
+    Rating,
+)
 
 
 @admin.register(Vehicle)
@@ -50,9 +60,25 @@ class ShipmentMilestoneAdmin(admin.ModelAdmin):
     readonly_fields = ('timestamp',)
 
 
+@admin.register(ShipmentDocument)
+class ShipmentDocumentAdmin(admin.ModelAdmin):
+    list_display = ('shipment', 'document_type', 'file_name', 'file_size_bytes', 'mime_type', 'uploaded_by', 'created_at')
+    list_filter = ('document_type', 'created_at')
+    search_fields = ('file_name', 'shipment__tracking_number', 'uploaded_by__email')
+    readonly_fields = ('created_at', 'updated_at', 'checksum_sha256')
+
+
+@admin.register(ProofOfDelivery)
+class ProofOfDeliveryAdmin(admin.ModelAdmin):
+    list_display = ('shipment', 'recipient_name', 'cargo_condition', 'confirmation_status', 'confirmed_by_shipper', 'delivered_at')
+    list_filter = ('cargo_condition', 'confirmation_status', 'delivered_at')
+    search_fields = ('recipient_name', 'shipment__tracking_number', 'dispute_reason')
+    readonly_fields = ('created_at', 'updated_at')
+
+
 @admin.register(Rating)
 class RatingAdmin(admin.ModelAdmin):
-    list_display = ('rater', 'ratee', 'stars', 'shipment_id', 'created_at')
+    list_display = ('rater', 'ratee', 'stars', 'shipment', 'created_at')
     list_filter = ('stars',)
     search_fields = ('rater__email', 'ratee__email', 'comment')
     readonly_fields = ('created_at', 'updated_at')

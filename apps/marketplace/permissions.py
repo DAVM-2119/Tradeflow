@@ -114,3 +114,59 @@ class IsShipmentParticipantOrAdmin(BasePermission):
             return True
 
         return False
+
+
+class IsShipmentDocumentParticipantOrAdmin(BasePermission):
+    """
+    Object-level permission ensuring only shipment participants
+    can upload, view, or download shipment documents.
+    """
+    def has_permission(self, request, view):
+        return bool(request.user and request.user.is_authenticated)
+
+    def has_object_permission(self, request, view, obj):
+        user = request.user
+        if not (user and user.is_authenticated):
+            return False
+
+        if user.is_superuser or user.role == Role.ADMIN:
+            return True
+
+        shipment = getattr(obj, 'shipment', obj)
+
+        # Shipper load owner
+        if hasattr(user, 'shipper_profile') and shipment.load.shipper == user.shipper_profile:
+            return True
+
+        # Transporter owner
+        if hasattr(user, 'transporter_profile') and shipment.transporter == user.transporter_profile:
+            return True
+
+        # Assigned driver
+        if hasattr(user, 'driver_profile') and shipment.driver == user.driver_profile:
+            return True
+
+        return False
+
+
+class IsPODConfirmableByShipper(BasePermission):
+    """
+    Object-level permission ensuring only the load-owning Shipper (or Admin)
+    can confirm or dispute an e-POD submission.
+    """
+    def has_permission(self, request, view):
+        return bool(request.user and request.user.is_authenticated)
+
+    def has_object_permission(self, request, view, obj):
+        user = request.user
+        if not (user and user.is_authenticated):
+            return False
+
+        if user.is_superuser or user.role == Role.ADMIN:
+            return True
+
+        pod = getattr(obj, 'pod', obj)
+        if hasattr(pod, 'shipment'):
+            return hasattr(user, 'shipper_profile') and pod.shipment.load.shipper == user.shipper_profile
+
+        return False

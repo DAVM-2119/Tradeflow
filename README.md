@@ -48,6 +48,7 @@ TradeFlow is a digital freight marketplace and logistics optimization platform c
 | `GET` | `/api/v1/loads/{id}/bids/` | View bids submitted on a cargo load | Load Owner / Transporter / Admin |
 | `POST` | `/api/v1/loads/{id}/bids/` | Submit a spot market bid on a load | **VERIFIED Transporters Only** |
 | `POST` | `/api/v1/bids/{id}/accept/` | Accept a winning bid (Atomic transaction: sets load `ASSIGNED`, winning bid `ACCEPTED`, competing bids `REJECTED`, initializes `Shipment`) | Load Owner Shipper / Admin |
+| `POST` | `/api/v1/bids/{id}/accept/` | Accept winning bid | Shipper / Admin |
 | `POST` | `/api/v1/bids/{id}/withdraw/` | Withdraw a submitted bid | Transporter Owner |
 | `GET` | `/api/v1/bids/me/` | List all bids submitted by authenticated transporter | Transporter |
 
@@ -61,6 +62,19 @@ TradeFlow is a digital freight marketplace and logistics optimization platform c
 | `POST` | `/api/v1/shipments/{id}/location/` | Submit GPS telemetry ping for shipment in transit | Assigned Driver / Transporter / Admin |
 | `GET` | `/api/v1/shipments/{id}/tracking/` | View complete GPS location history & milestone audit trail | Shipment Participant / Admin |
 
+### 5. Document Management & Digital Proof of Delivery (`/api/v1/`)
+| Method | Endpoint | Description | Auth / Role Required |
+| :--- | :--- | :--- | :--- |
+| `GET` | `/api/v1/shipments/{id}/documents/` | List documents associated with a shipment | Shipment Participant / Admin |
+| `POST` | `/api/v1/shipments/{id}/documents/` | Upload logistics document (Waybill, Customs Release, etc.) | Shipment Participant / Admin |
+| `GET` | `/api/v1/documents/{id}/` | Retrieve document metadata | Shipment Participant / Admin |
+| `GET` | `/api/v1/documents/{id}/download/` | Protected document download (returns FileResponse) | Shipment Participant / Admin |
+| `DELETE` | `/api/v1/documents/{id}/` | Delete shipment document | Document Uploader / Admin |
+| `GET` | `/api/v1/shipments/{id}/pod/` | Get digital Proof of Delivery (e-POD) details | Shipment Participant / Admin |
+| `POST` | `/api/v1/shipments/{id}/pod/` | Submit digital Proof of Delivery (e-POD) | Driver / Transporter / Admin |
+| `POST` | `/api/v1/pod/{id}/confirm/` | Confirm e-POD delivery (`CONFIRMED`) | Shipper Load Owner / Admin |
+| `POST` | `/api/v1/pod/{id}/dispute/` | Dispute e-POD delivery (`DISPUTED` with reason) | Shipper Load Owner / Admin |
+
 ---
 
 ## Business & Security Rules
@@ -68,6 +82,9 @@ TradeFlow is a digital freight marketplace and logistics optimization platform c
 - **Spot Market Bidding Eligibility**: Only `VERIFIED` transporters can submit bids (`IsTransporterVerified` & `VerificationService.can_accept_load()`). Unverified (`PENDING` or `SUSPENDED`) transporters receive `403 Forbidden`.
 - **Atomic Bid Acceptance**: Executed via `transaction.atomic()`. Accepting a bid atomically updates load status to `ASSIGNED`, assigns winning transporter & vehicle, marks winning bid `ACCEPTED`, rejects competing bids, and initializes a `Shipment` record with a unique tracking number (`TRK-...`).
 - **Real-Time GPS & Milestone Auditing**: Status transitions log `ShipmentMilestone` records. Telemetry pings capture latitude, longitude, speed (km/h), heading, and location name.
+- **Document Management & File Validation**: Maximum file size 10MB; allowed extensions `.pdf`, `.png`, `.jpg`, `.jpeg`. Executables (`.exe`, `.sh`, `.bat`, etc.) rejected with `400 Bad Request`. Computes SHA-256 checksum deterministically.
+- **Protected Downloads**: Direct public file links are restricted; documents are downloaded via protected endpoint `GET /api/v1/documents/{id}/download/` enforcing participant authorization checks (`403 Forbidden` for non-participants).
+- **Digital Proof of Delivery (e-POD)**: Submitting an e-POD creates a `ProofOfDelivery` record in `SUBMITTED` state, automatically sets shipment status to `DELIVERED`, and logs a delivery `ShipmentMilestone`. Shippers can confirm (`CONFIRMED`) or dispute (`DISPUTED`) the delivery.
 
 ---
 
@@ -98,7 +115,7 @@ pipenv install --dev
 pipenv run python manage.py migrate
 ```
 
-### 5. Verify System Checks & Run Full Test Suite (52/52 Passed)
+### 5. Verify System Checks & Run Full Test Suite (66/66 Passed)
 ```bash
 pipenv run python manage.py check
 pipenv run pytest

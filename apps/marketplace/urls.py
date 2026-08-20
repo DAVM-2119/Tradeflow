@@ -19,6 +19,12 @@ from apps.marketplace.views import (
     ShipmentStatusUpdateView,
     ShipmentLocationView,
     ShipmentTrackingHistoryView,
+    ShipmentDocumentListUploadView,
+    DocumentDetailView,
+    DocumentDownloadView,
+    ShipmentPODView,
+    PODConfirmView,
+    PODDisputeView,
     RatingListCreateView,
 )
 
@@ -47,6 +53,14 @@ urlpatterns = [
     path('shipments/<int:pk>/status/', ShipmentStatusUpdateView.as_view(), name='shipment-status-update'),
     path('shipments/<int:pk>/location/', ShipmentLocationView.as_view(), name='shipment-location'),
     path('shipments/<int:pk>/tracking/', ShipmentTrackingHistoryView.as_view(), name='shipment-tracking-history'),
+
+    # Phase 7: Document Management & Digital Proof of Delivery (e-POD)
+    path('shipments/<int:pk>/documents/', ShipmentDocumentListUploadView.as_view(), name='shipment-document-list-upload'),
+    path('documents/<int:pk>/', DocumentDetailView.as_view(), name='document-detail'),
+    path('documents/<int:pk>/download/', DocumentDownloadView.as_view(), name='document-download'),
+    path('shipments/<int:pk>/pod/', ShipmentPODView.as_view(), name='shipment-pod'),
+    path('pod/<int:pk>/confirm/', PODConfirmView.as_view(), name='pod-confirm'),
+    path('pod/<int:pk>/dispute/', PODDisputeView.as_view(), name='pod-dispute'),
 
     # Ratings
     path('ratings/', RatingListCreateView.as_view(), name='rating-list-create'),

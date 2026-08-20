@@ -12,6 +12,11 @@ from apps.marketplace.models import (
     ShipmentStatus,
     LocationUpdate,
     ShipmentMilestone,
+    DocumentType,
+    ShipmentDocument,
+    CargoCondition,
+    PODConfirmationStatus,
+    ProofOfDelivery,
     Rating,
 )
 
@@ -196,10 +201,6 @@ class CargoLoadSerializer(serializers.ModelSerializer):
         return attrs
 
 
-# ============================================================================
-# PHASE 6: SHIPMENT & TRACKING SERIALIZERS
-# ============================================================================
-
 class LocationUpdateSerializer(serializers.ModelSerializer):
     recorded_by_email = serializers.EmailField(source='recorded_by.email', read_only=True)
 
@@ -290,6 +291,87 @@ class ShipmentStatusUpdateSerializer(serializers.Serializer):
     notes = serializers.CharField(required=False, allow_blank=True)
 
 
+# ============================================================================
+# PHASE 7: DOCUMENT MANAGEMENT & DIGITAL PROOF OF DELIVERY (e-POD) SERIALIZERS
+# ============================================================================
+
+class ShipmentDocumentSerializer(serializers.ModelSerializer):
+    uploaded_by_email = serializers.EmailField(source='uploaded_by.email', read_only=True)
+
+    class Meta:
+        model = ShipmentDocument
+        fields = (
+            'id',
+            'shipment',
+            'document_type',
+            'file_name',
+            'file_size_bytes',
+            'mime_type',
+            'checksum_sha256',
+            'uploaded_by',
+            'uploaded_by_email',
+            'notes',
+            'created_at',
+            'updated_at',
+        )
+        read_only_fields = ('id', 'shipment', 'file_name', 'file_size_bytes', 'mime_type', 'checksum_sha256', 'uploaded_by', 'created_at', 'updated_at')
+
+
+class ShipmentDocumentUploadSerializer(serializers.Serializer):
+    document_type = serializers.ChoiceField(choices=DocumentType.choices, default=DocumentType.WAYBILL)
+    file = serializers.FileField()
+    notes = serializers.CharField(required=False, allow_blank=True)
+
+
+class ProofOfDeliverySerializer(serializers.ModelSerializer):
+    delivered_by_driver_name = serializers.CharField(source='delivered_by_driver.user.get_full_name', read_only=True, default=None)
+    confirmed_by_shipper_email = serializers.EmailField(source='confirmed_by_shipper.email', read_only=True, default=None)
+
+    class Meta:
+        model = ProofOfDelivery
+        fields = (
+            'id',
+            'shipment',
+            'delivered_by_driver',
+            'delivered_by_driver_name',
+            'recipient_name',
+            'recipient_phone',
+            'delivery_location',
+            'delivered_at',
+            'signature_data',
+            'cargo_condition',
+            'received_weight_tonnes',
+            'delivery_notes',
+            'confirmation_status',
+            'confirmed_by_shipper',
+            'confirmed_by_shipper_email',
+            'confirmed_at',
+            'dispute_reason',
+            'created_at',
+            'updated_at',
+        )
+        read_only_fields = ('id', 'shipment', 'delivered_by_driver', 'confirmation_status', 'confirmed_by_shipper', 'confirmed_at', 'created_at', 'updated_at')
+
+
+class PODCreateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ProofOfDelivery
+        fields = (
+            'recipient_name',
+            'recipient_phone',
+            'delivery_location',
+            'delivered_at',
+            'signature_data',
+            'cargo_condition',
+            'received_weight_tonnes',
+            'delivery_notes',
+        )
+
+
+class PODDisputeSerializer(serializers.Serializer):
+    dispute_reason = serializers.CharField(required=True)
+
+
 class RatingSerializer(serializers.ModelSerializer):
     rater_email = serializers.EmailField(source='rater.email', read_only=True)
     ratee_email = serializers.EmailField(source='ratee.email', read_only=True)
@@ -305,7 +387,6 @@ class RatingSerializer(serializers.ModelSerializer):
             'stars',
             'comment',
             'shipment',
-            'shipment_id',
             'created_at',
         )
         read_only_fields = ('id', 'rater', 'created_at')

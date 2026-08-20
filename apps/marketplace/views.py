@@ -1,4 +1,6 @@
+from django.http import FileResponse
 from rest_framework import generics, status, permissions
+from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.response import Response
 from rest_framework.exceptions import PermissionDenied, ValidationError, NotFound
 from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiResponse
@@ -15,6 +17,11 @@ from apps.marketplace.models import (
     ShipmentStatus,
     LocationUpdate,
     ShipmentMilestone,
+    DocumentType,
+    ShipmentDocument,
+    CargoCondition,
+    PODConfirmationStatus,
+    ProofOfDelivery,
     Rating,
 )
 from apps.marketplace.serializers import (
@@ -30,10 +37,23 @@ from apps.marketplace.serializers import (
     ShipmentMilestoneSerializer,
     AssignDriverSerializer,
     ShipmentStatusUpdateSerializer,
+    ShipmentDocumentSerializer,
+    ShipmentDocumentUploadSerializer,
+    ProofOfDeliverySerializer,
+    PODCreateSerializer,
+    PODDisputeSerializer,
     RatingSerializer,
 )
-from apps.marketplace.services import VerificationService, FleetService, LoadService, BiddingService, TrackingService
-from apps.marketplace.permissions import IsVehicleOwnerOrAdmin, IsTransporterVerified, IsLoadOwnerOrAdmin, IsBidOwnerOrAdmin, IsShipmentParticipantOrAdmin
+from apps.marketplace.services import VerificationService, FleetService, LoadService, BiddingService, TrackingService, DocumentService, PODService
+from apps.marketplace.permissions import (
+    IsVehicleOwnerOrAdmin,
+    IsTransporterVerified,
+    IsLoadOwnerOrAdmin,
+    IsBidOwnerOrAdmin,
+    IsShipmentParticipantOrAdmin,
+    IsShipmentDocumentParticipantOrAdmin,
+    IsPODConfirmableByShipper,
+)
 
 
 class TransporterMeProfileView(generics.RetrieveUpdateAPIView):
@@ -403,10 +423,6 @@ class TransporterMyBidsView(generics.ListAPIView):
         return super().get(request, *args, **kwargs)
 
 
-# ============================================================================
-# PHASE 6: SHIPMENT EXECUTION & REAL-TIME TRACKING VIEWS
-# ============================================================================
-
 class ShipmentListView(generics.ListAPIView):
     """
     Endpoint for listing active corridor shipments.
@@ -574,6 +590,203 @@ class ShipmentTrackingHistoryView(generics.GenericAPIView):
             "milestones": ShipmentMilestoneSerializer(milestones, many=True).data,
             "location_updates": LocationUpdateSerializer(location_updates, many=True).data
         }, status=status.HTTP_200_OK)
+
+
+# ============================================================================
+# PHASE 7: DOCUMENT MANAGEMENT & DIGITAL PROOF OF DELIVERY (e-POD) VIEWS
+# ============================================================================
+
+class ShipmentDocumentListUploadView(generics.GenericAPIView):
+    """
+    GET: List all documents uploaded for a shipment.
+    POST: Upload a new logistics document (Waybill, Customs Release, Invoice, etc.) using multipart/form-data.
+    """
+    parser_classes = [MultiPartParser, FormParser]
+    permission_classes = [permissions.IsAuthenticated, IsShipmentDocumentParticipantOrAdmin]
+
+    def get_serializer_class(self):
+        if self.request.method == 'POST':
+            return ShipmentDocumentUploadSerializer
+        return ShipmentDocumentSerializer
+
+    @extend_schema(summary="List documents for a shipment")
+    def get(self, request, pk=None):
+        try:
+            shipment = Shipment.objects.get(pk=pk)
+        except Shipment.DoesNotExist:
+            raise NotFound("Shipment not found.")
+
+        self.check_object_permissions(request, shipment)
+        docs = ShipmentDocument.objects.filter(shipment=shipment)
+        return Response(ShipmentDocumentSerializer(docs, many=True).data, status=status.HTTP_200_OK)
+
+    @extend_schema(summary="Upload a shipment logistics document (Max 10MB, white-listed extensions)")
+    def post(self, request, pk=None):
+        try:
+            shipment = Shipment.objects.get(pk=pk)
+        except Shipment.DoesNotExist:
+            raise NotFound("Shipment not found.")
+
+        self.check_object_permissions(request, shipment)
+
+        serializer = ShipmentDocumentUploadSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        file_obj = serializer.validated_data['file']
+        document_type = serializer.validated_data.get('document_type', DocumentType.WAYBILL)
+        notes = serializer.validated_data.get('notes', '')
+
+        document = DocumentService.upload_document(
+            shipment=shipment,
+            file_obj=file_obj,
+            document_type=document_type,
+            user=request.user,
+            notes=notes
+        )
+        return Response(ShipmentDocumentSerializer(document).data, status=status.HTTP_201_CREATED)
+
+
+class DocumentDetailView(generics.GenericAPIView):
+    """
+    GET: Retrieve document metadata.
+    DELETE: Delete a document (Uploader or Admin).
+    """
+    permission_classes = [permissions.IsAuthenticated, IsShipmentDocumentParticipantOrAdmin]
+    serializer_class = ShipmentDocumentSerializer
+
+    @extend_schema(summary="Get document metadata")
+    def get(self, request, pk=None):
+        try:
+            document = ShipmentDocument.objects.get(pk=pk)
+        except ShipmentDocument.DoesNotExist:
+            raise NotFound("Document not found.")
+
+        self.check_object_permissions(request, document)
+        return Response(ShipmentDocumentSerializer(document).data, status=status.HTTP_200_OK)
+
+    @extend_schema(summary="Delete a shipment document")
+    def delete(self, request, pk=None):
+        try:
+            document = ShipmentDocument.objects.get(pk=pk)
+        except ShipmentDocument.DoesNotExist:
+            raise NotFound("Document not found.")
+
+        self.check_object_permissions(request, document)
+        DocumentService.delete_document(document, request.user)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class DocumentDownloadView(generics.GenericAPIView):
+    """
+    GET: Protected file download endpoint returning Django FileResponse for authorized participants.
+    """
+    permission_classes = [permissions.IsAuthenticated, IsShipmentDocumentParticipantOrAdmin]
+
+    @extend_schema(summary="Download protected shipment document file")
+    def get(self, request, pk=None):
+        try:
+            document = ShipmentDocument.objects.get(pk=pk)
+        except ShipmentDocument.DoesNotExist:
+            raise NotFound("Document not found.")
+
+        self.check_object_permissions(request, document)
+
+        if not document.file:
+            raise NotFound("Document file not found on disk.")
+
+        response = FileResponse(document.file.open('rb'), content_type=document.mime_type)
+        response['Content-Disposition'] = f'attachment; filename="{document.file_name}"'
+        return response
+
+
+class ShipmentPODView(generics.GenericAPIView):
+    """
+    GET: Retrieve digital Proof of Delivery (e-POD) for a shipment.
+    POST: Driver or Transporter submits e-POD details, automatically setting shipment status to DELIVERED.
+    """
+    permission_classes = [permissions.IsAuthenticated, IsShipmentParticipantOrAdmin]
+
+    def get_serializer_class(self):
+        if self.request.method == 'POST':
+            return PODCreateSerializer
+        return ProofOfDeliverySerializer
+
+    @extend_schema(summary="Get digital Proof of Delivery (e-POD) for a shipment")
+    def get(self, request, pk=None):
+        try:
+            shipment = Shipment.objects.get(pk=pk)
+        except Shipment.DoesNotExist:
+            raise NotFound("Shipment not found.")
+
+        self.check_object_permissions(request, shipment)
+
+        if not hasattr(shipment, 'pod'):
+            raise NotFound("Proof of Delivery has not been submitted for this shipment.")
+
+        return Response(ProofOfDeliverySerializer(shipment.pod).data, status=status.HTTP_200_OK)
+
+    @extend_schema(summary="Submit digital Proof of Delivery (e-POD)")
+    def post(self, request, pk=None):
+        try:
+            shipment = Shipment.objects.get(pk=pk)
+        except Shipment.DoesNotExist:
+            raise NotFound("Shipment not found.")
+
+        self.check_object_permissions(request, shipment)
+
+        serializer = PODCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        pod = PODService.create_pod(
+            shipment=shipment,
+            driver_user=request.user,
+            pod_data=serializer.validated_data
+        )
+        return Response(ProofOfDeliverySerializer(pod).data, status=status.HTTP_201_CREATED)
+
+
+class PODConfirmView(generics.GenericAPIView):
+    """
+    POST: Shipper load owner confirms e-POD delivery (sets status to CONFIRMED).
+    """
+    permission_classes = [permissions.IsAuthenticated, IsPODConfirmableByShipper]
+    serializer_class = ProofOfDeliverySerializer
+
+    @extend_schema(summary="Confirm e-POD delivery (Shipper load owner only)")
+    def post(self, request, pk=None):
+        try:
+            pod = ProofOfDelivery.objects.get(pk=pk)
+        except ProofOfDelivery.DoesNotExist:
+            raise NotFound("Proof of Delivery not found.")
+
+        self.check_object_permissions(request, pod)
+
+        confirmed_pod = PODService.confirm_pod(pod, request.user)
+        return Response(ProofOfDeliverySerializer(confirmed_pod).data, status=status.HTTP_200_OK)
+
+
+class PODDisputeView(generics.GenericAPIView):
+    """
+    POST: Shipper load owner disputes e-POD delivery with dispute reason.
+    """
+    permission_classes = [permissions.IsAuthenticated, IsPODConfirmableByShipper]
+    serializer_class = PODDisputeSerializer
+
+    @extend_schema(summary="Dispute e-POD delivery (Shipper load owner only)")
+    def post(self, request, pk=None):
+        try:
+            pod = ProofOfDelivery.objects.get(pk=pk)
+        except ProofOfDelivery.DoesNotExist:
+            raise NotFound("Proof of Delivery not found.")
+
+        self.check_object_permissions(request, pod)
+
+        serializer = PODDisputeSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        dispute_reason = serializer.validated_data['dispute_reason']
+        disputed_pod = PODService.dispute_pod(pod, request.user, dispute_reason)
+        return Response(ProofOfDeliverySerializer(disputed_pod).data, status=status.HTTP_200_OK)
 
 
 class RatingListCreateView(generics.ListCreateAPIView):

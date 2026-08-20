@@ -353,7 +353,7 @@ def test_load_filtering_by_corridor(api_client, shipper_user):
         destination="Hawassa",
         cargo_type="Manufactured",
         weight_tonnes=10.00,
-        required_vehicle_type=VehicleType.BOX_TRUCK,
+        required_vehicle_type=VehicleType.CONTAINER_TRUCK,
         pickup_date=date.today() + timedelta(days=1),
         delivery_date=date.today() + timedelta(days=3),
         target_price=30000.00,
