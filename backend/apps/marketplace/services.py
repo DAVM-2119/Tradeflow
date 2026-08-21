@@ -34,6 +34,11 @@ from apps.marketplace.models import (
     TransporterPayout,
     PaymentDisputeStatus,
     PaymentDispute,
+    OfflineSyncEventType,
+    OfflineSyncStatus,
+    OfflineSyncEvent,
+    IncidentType,
+    DriverIncidentReport,
 )
 
 
@@ -277,7 +282,7 @@ class TrackingService:
 
     @classmethod
 
-    def update_status(cls, shipment: Shipment, new_status: str, user, location_name: str = "", notes: str = "") -> Shipment:
+    def update_status(cls, shipment: Shipment, new_status: str, user, location_name: str = "", notes: str = "", timestamp=None) -> Shipment:
         is_transporter = hasattr(user, 'transporter_profile') and shipment.transporter == user.transporter_profile
         is_driver = hasattr(user, 'driver_profile') and shipment.driver == user.driver_profile
         is_admin = user.is_superuser or user.role == Role.ADMIN
@@ -285,27 +290,37 @@ class TrackingService:
         if not (is_transporter or is_driver or is_admin or user == shipment.load.shipper.user):
             raise PermissionDenied("Only the assigned driver, transporter, or an administrator can update shipment status.")
 
+        event_time = timestamp or timezone.now()
+
         with transaction.atomic():
             shipment.status = new_status
             if new_status in [ShipmentStatus.AT_PICKUP, ShipmentStatus.IN_TRANSIT] and not shipment.actual_pickup_time:
-                shipment.actual_pickup_time = timezone.now()
+                shipment.actual_pickup_time = event_time
             elif new_status == ShipmentStatus.DELIVERED and not shipment.actual_delivery_time:
-                shipment.actual_delivery_time = timezone.now()
+                shipment.actual_delivery_time = event_time
             shipment.save()
 
-            ShipmentMilestone.objects.create(
+            milestone = ShipmentMilestone.objects.create(
                 shipment=shipment,
                 status=new_status,
                 location_name=location_name or (shipment.origin if new_status != ShipmentStatus.DELIVERED else shipment.destination),
                 notes=notes or f"Shipment status updated to {new_status}.",
                 updated_by=user
             )
+            if timestamp:
+                milestone.timestamp = timestamp
+                milestone.save(update_fields=['timestamp'])
 
         return shipment
 
     @classmethod
 
-    def record_location(cls, shipment: Shipment, latitude: float, longitude: float, speed_kmh: float = None, heading_degrees: float = None, location_name: str = "", user=None) -> LocationUpdate:
+    def record_location(cls, shipment: Shipment, latitude: float, longitude: float, speed_kmh: float = None, heading_degrees: float = None, location_name: str = "", user=None, timestamp=None) -> LocationUpdate:
+        if latitude < -90 or latitude > 90:
+            raise ValidationError({'latitude': 'Latitude must be between -90 and 90 degrees.'})
+        if longitude < -180 or longitude > 180:
+            raise ValidationError({'longitude': 'Longitude must be between -180 and 180 degrees.'})
+
         location_update = LocationUpdate.objects.create(
             shipment=shipment,
             latitude=latitude,
@@ -315,6 +330,10 @@ class TrackingService:
             location_name=location_name,
             recorded_by=user
         )
+        if timestamp:
+            location_update.timestamp = timestamp
+            location_update.save(update_fields=['timestamp'])
+            
         return location_update
 
 
@@ -802,3 +821,302 @@ class DisputeService:
                 dispute.settlement.save()
 
         return dispute
+
+
+# ============================================================================
+# PHASE 9: OFFLINE-FIRST SYNCHRONIZATION SERVICES (SRS 2.4, 2.5, 4.1, 5.2)
+# ============================================================================
+
+class IncidentReportService:
+    """
+    Domain service for driver incident report creation.
+    """
+    @classmethod
+
+    def create_incident_report(cls, shipment: Shipment, driver_user, incident_data: dict, offline_event: OfflineSyncEvent = None) -> DriverIncidentReport:
+        is_transporter = hasattr(driver_user, 'transporter_profile') and shipment.transporter == driver_user.transporter_profile
+        is_driver = hasattr(driver_user, 'driver_profile') and shipment.driver == driver_user.driver_profile
+        is_admin = driver_user.is_superuser or driver_user.role == Role.ADMIN
+
+        if not (is_transporter or is_driver or is_admin):
+            raise PermissionDenied("Only assigned driver, transporter, or administrator can report an incident for this shipment.")
+
+        driver_profile = getattr(driver_user, 'driver_profile', None)
+        if not driver_profile and hasattr(shipment, 'driver'):
+            driver_profile = shipment.driver
+
+        if not driver_profile:
+            # Fallback for admin or transporter reporting
+            driver_profile = DriverProfile.objects.filter(transporter=shipment.transporter).first()
+
+        reported_at = incident_data.get('reported_at') or timezone.now()
+
+        report = DriverIncidentReport.objects.create(
+            shipment=shipment,
+            driver=driver_profile,
+            reported_by=driver_user,
+            incident_type=incident_data.get('incident_type', IncidentType.OTHER),
+            latitude=incident_data.get('latitude'),
+            longitude=incident_data.get('longitude'),
+            location_name=incident_data.get('location_name', ''),
+            description=incident_data.get('description', ''),
+            reported_at=reported_at,
+            offline_event=offline_event
+        )
+
+        # Log shipment milestone for incident visibility
+        ShipmentMilestone.objects.create(
+            shipment=shipment,
+            status=shipment.status,
+            location_name=report.location_name or shipment.origin,
+            notes=f"INCIDENT REPORTED ({report.get_incident_type_display()}): {report.description}",
+            updated_by=driver_user,
+            timestamp=reported_at
+        )
+
+        return report
+
+
+class OfflineSyncService:
+    """
+    Domain service executing batch offline synchronization, idempotency enforcement,
+    per-event savepoints, timestamp preservation, and geographic validation.
+    """
+    MAX_BATCH_SIZE = 50
+
+    @classmethod
+
+    def process_batch(cls, user, events_data: list, device_id: str = "") -> dict:
+        if len(events_data) > cls.MAX_BATCH_SIZE:
+            raise ValidationError(f"Batch size ({len(events_data)}) exceeds maximum limit of {cls.MAX_BATCH_SIZE} events.")
+
+        results = []
+        synced_count = 0
+        duplicate_count = 0
+        failed_count = 0
+
+        for event_dict in events_data:
+            res = cls._process_single_event_safe(user, event_dict, device_id)
+            results.append(res)
+            if res['status'] == OfflineSyncStatus.SYNCED:
+                synced_count += 1
+            elif res['status'] == OfflineSyncStatus.DUPLICATE:
+                duplicate_count += 1
+            else:
+                failed_count += 1
+
+        return {
+            "total_events": len(events_data),
+            "synced_count": synced_count,
+            "duplicate_count": duplicate_count,
+            "failed_count": failed_count,
+            "results": results
+        }
+
+    @classmethod
+
+    def _process_single_event_safe(cls, user, event_dict: dict, device_id: str) -> dict:
+        client_event_id = event_dict.get('client_event_id')
+        if not client_event_id:
+            return {
+                "client_event_id": "UNKNOWN",
+                "status": OfflineSyncStatus.REJECTED,
+                "event_type": event_dict.get('event_type', 'UNKNOWN'),
+                "server_record_id": None,
+                "server_timestamp": timezone.now().isoformat(),
+                "message": "Missing required field: client_event_id."
+            }
+
+        # Idempotency Check
+        existing_event = OfflineSyncEvent.objects.filter(client_event_id=client_event_id).first()
+        if existing_event:
+            return {
+                "client_event_id": client_event_id,
+                "status": OfflineSyncStatus.DUPLICATE,
+                "event_type": existing_event.event_type,
+                "server_record_id": existing_event.server_record_id,
+                "server_timestamp": existing_event.server_received_at.isoformat(),
+                "message": "Event already synchronized (Idempotent request)."
+            }
+
+        sid = transaction.savepoint()
+        try:
+            res = cls._process_single_event_logic(user, event_dict, device_id)
+            transaction.savepoint_commit(sid)
+            return res
+        except Exception as e:
+            transaction.savepoint_rollback(sid)
+            err_msg = str(e)
+            
+            # Log failed sync record
+            shipment_id = event_dict.get('shipment_id')
+            shipment = Shipment.objects.filter(pk=shipment_id).first() if shipment_id else None
+            
+            if shipment:
+                client_created_str = event_dict.get('client_created_at')
+                client_dt = timezone.now()
+                if client_created_str:
+                    try:
+                        client_dt = datetime.fromisoformat(client_created_str.replace('Z', '+00:00'))
+                    except Exception:
+                        pass
+                
+                OfflineSyncEvent.objects.create(
+                    client_event_id=client_event_id,
+                    user=user,
+                    device_id=device_id or event_dict.get('device_id', ''),
+                    event_type=event_dict.get('event_type', OfflineSyncEventType.GPS_UPDATE),
+                    shipment=shipment,
+                    payload=event_dict.get('payload', {}),
+                    client_created_at=client_dt,
+                    status=OfflineSyncStatus.FAILED,
+                    error_message=err_msg
+                )
+
+            return {
+                "client_event_id": client_event_id,
+                "status": OfflineSyncStatus.FAILED,
+                "event_type": event_dict.get('event_type', 'UNKNOWN'),
+                "server_record_id": None,
+                "server_timestamp": timezone.now().isoformat(),
+                "message": f"Processing failed: {err_msg}"
+            }
+
+    @classmethod
+
+    def _process_single_event_logic(cls, user, event_dict: dict, device_id: str) -> dict:
+        client_event_id = event_dict['client_event_id']
+        event_type = event_dict.get('event_type')
+        shipment_id = event_dict.get('shipment_id')
+        client_created_str = event_dict.get('client_created_at')
+        payload = event_dict.get('payload', {})
+
+        if not event_type or event_type not in OfflineSyncEventType.values:
+            raise ValidationError(f"Invalid or unsupported event_type '{event_type}'.")
+
+        if not shipment_id:
+            raise ValidationError("shipment_id is required for offline sync events.")
+
+        try:
+            shipment = Shipment.objects.get(pk=shipment_id)
+        except Shipment.DoesNotExist:
+            raise NotFound(f"Shipment #{shipment_id} not found.")
+
+        # Authorization check
+        is_transporter = hasattr(user, 'transporter_profile') and shipment.transporter == user.transporter_profile
+        is_driver = hasattr(user, 'driver_profile') and shipment.driver == user.driver_profile
+        is_admin = user.is_superuser or user.role == Role.ADMIN
+
+        if not (is_transporter or is_driver or is_admin):
+            raise PermissionDenied("You are not an assigned driver or participant on this shipment.")
+
+        client_dt = timezone.now()
+        if client_created_str:
+            try:
+                client_dt = datetime.fromisoformat(client_created_str.replace('Z', '+00:00'))
+            except Exception:
+                pass
+
+        server_record_id = None
+        message = ""
+
+        # Dispatch event type
+        if event_type == OfflineSyncEventType.GPS_UPDATE:
+            lat = payload.get('latitude')
+            lon = payload.get('longitude')
+            if lat is None or lon is None:
+                raise ValidationError("GPS_UPDATE payload requires latitude and longitude.")
+
+            location_update = TrackingService.record_location(
+                shipment=shipment,
+                latitude=float(lat),
+                longitude=float(lon),
+                speed_kmh=float(payload.get('speed_kmh')) if payload.get('speed_kmh') is not None else None,
+                heading_degrees=float(payload.get('heading_degrees')) if payload.get('heading_degrees') is not None else None,
+                location_name=payload.get('location_name', ''),
+                user=user,
+                timestamp=client_dt
+            )
+            server_record_id = location_update.id
+            message = "GPS telemetry ping synchronized successfully."
+
+        elif event_type == OfflineSyncEventType.WAYPOINT_CHECKIN:
+            status_val = payload.get('status', ShipmentStatus.IN_TRANSIT)
+            location_name = payload.get('location_name', '')
+            notes = payload.get('notes', 'Offline waypoint check-in synced.')
+
+            updated_shipment = TrackingService.update_status(
+                shipment=shipment,
+                new_status=status_val,
+                user=user,
+                location_name=location_name,
+                notes=notes,
+                timestamp=client_dt
+            )
+            milestone = updated_shipment.milestones.last()
+            server_record_id = milestone.id if milestone else updated_shipment.id
+            message = "Waypoint check-in milestone synchronized successfully."
+
+        elif event_type == OfflineSyncEventType.INCIDENT_REPORT:
+            report_data = {
+                "incident_type": payload.get('incident_type', IncidentType.OTHER),
+                "latitude": payload.get('latitude'),
+                "longitude": payload.get('longitude'),
+                "location_name": payload.get('location_name', ''),
+                "description": payload.get('description', 'Offline driver incident report.'),
+                "reported_at": client_dt
+            }
+
+            # Pre-create sync event record for FK linking
+            sync_event = OfflineSyncEvent.objects.create(
+                client_event_id=client_event_id,
+                user=user,
+                device_id=device_id or event_dict.get('device_id', ''),
+                event_type=event_type,
+                shipment=shipment,
+                payload=payload,
+                client_created_at=client_dt,
+                status=OfflineSyncStatus.SYNCED,
+                processed_at=timezone.now()
+            )
+
+            report = IncidentReportService.create_incident_report(
+                shipment=shipment,
+                driver_user=user,
+                incident_data=report_data,
+                offline_event=sync_event
+            )
+            sync_event.server_record_id = report.id
+            sync_event.save(update_fields=['server_record_id'])
+
+            return {
+                "client_event_id": client_event_id,
+                "status": OfflineSyncStatus.SYNCED,
+                "event_type": event_type,
+                "server_record_id": report.id,
+                "server_timestamp": sync_event.server_received_at.isoformat(),
+                "message": "Driver incident report synchronized successfully."
+            }
+
+        # Create Sync Event record for GPS or WAYPOINT
+        sync_event = OfflineSyncEvent.objects.create(
+            client_event_id=client_event_id,
+            user=user,
+            device_id=device_id or event_dict.get('device_id', ''),
+            event_type=event_type,
+            shipment=shipment,
+            payload=payload,
+            client_created_at=client_dt,
+            status=OfflineSyncStatus.SYNCED,
+            server_record_id=server_record_id,
+            processed_at=timezone.now()
+        )
+
+        return {
+            "client_event_id": client_event_id,
+            "status": OfflineSyncStatus.SYNCED,
+            "event_type": event_type,
+            "server_record_id": server_record_id,
+            "server_timestamp": sync_event.server_received_at.isoformat(),
+            "message": message
+        }

@@ -13,6 +13,8 @@ from apps.marketplace.models import (
     Payment,
     TransporterPayout,
     PaymentDispute,
+    OfflineSyncEvent,
+    DriverIncidentReport,
     Rating,
 )
 
@@ -118,6 +120,22 @@ class PaymentDisputeAdmin(admin.ModelAdmin):
     list_display = ('settlement', 'raised_by', 'status', 'resolved_by', 'created_at', 'resolved_at')
     list_filter = ('status', 'created_at')
     search_fields = ('reason', 'resolution_notes', 'raised_by__email', 'settlement__shipment__tracking_number')
+    readonly_fields = ('created_at', 'updated_at')
+
+
+@admin.register(OfflineSyncEvent)
+class OfflineSyncEventAdmin(admin.ModelAdmin):
+    list_display = ('client_event_id', 'user', 'event_type', 'shipment', 'status', 'server_record_id', 'client_created_at', 'server_received_at')
+    list_filter = ('event_type', 'status', 'server_received_at')
+    search_fields = ('client_event_id', 'user__email', 'shipment__tracking_number', 'device_id')
+    readonly_fields = ('client_event_id', 'server_received_at', 'processed_at', 'created_at', 'updated_at')
+
+
+@admin.register(DriverIncidentReport)
+class DriverIncidentReportAdmin(admin.ModelAdmin):
+    list_display = ('shipment', 'incident_type', 'driver', 'reported_by', 'location_name', 'reported_at')
+    list_filter = ('incident_type', 'reported_at')
+    search_fields = ('description', 'location_name', 'shipment__tracking_number', 'driver__user__email')
     readonly_fields = ('created_at', 'updated_at')
 
 

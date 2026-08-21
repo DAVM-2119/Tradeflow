@@ -26,6 +26,11 @@ from apps.marketplace.models import (
     TransporterPayout,
     PaymentDisputeStatus,
     PaymentDispute,
+    OfflineSyncEventType,
+    OfflineSyncStatus,
+    OfflineSyncEvent,
+    IncidentType,
+    DriverIncidentReport,
     Rating,
 )
 
@@ -377,10 +382,6 @@ class PODDisputeSerializer(serializers.Serializer):
     dispute_reason = serializers.CharField(required=True)
 
 
-# ============================================================================
-# PHASE 8: PAYMENTS & FREIGHT SETTLEMENT SERIALIZERS (FR-10)
-# ============================================================================
-
 class FreightInvoiceSerializer(serializers.ModelSerializer):
     issuer_email = serializers.EmailField(source='issuer.email', read_only=True, default=None)
     payer_email = serializers.EmailField(source='payer.email', read_only=True, default=None)
@@ -522,6 +523,69 @@ class DisputeRaiseSerializer(serializers.Serializer):
 class DisputeResolveSerializer(serializers.Serializer):
     resolution_notes = serializers.CharField(required=True)
     status = serializers.ChoiceField(choices=[PaymentDisputeStatus.RESOLVED, PaymentDisputeStatus.REJECTED], default=PaymentDisputeStatus.RESOLVED)
+
+
+# ============================================================================
+# PHASE 9: OFFLINE-FIRST SYNCHRONIZATION SERIALIZERS (SRS 2.4, 4.1, 5.2)
+# ============================================================================
+
+class OfflineSyncEventInputSerializer(serializers.Serializer):
+    client_event_id = serializers.CharField(max_length=100)
+    event_type = serializers.ChoiceField(choices=OfflineSyncEventType.choices)
+    shipment_id = serializers.IntegerField()
+    device_id = serializers.CharField(max_length=100, required=False, allow_blank=True, default='')
+    client_created_at = serializers.DateTimeField()
+    payload = serializers.JSONField(default=dict)
+
+
+class OfflineSyncBatchInputSerializer(serializers.Serializer):
+    device_id = serializers.CharField(max_length=100, required=False, allow_blank=True, default='')
+    events = OfflineSyncEventInputSerializer(many=True)
+
+
+class OfflineSyncEventResultSerializer(serializers.Serializer):
+    client_event_id = serializers.CharField()
+    status = serializers.ChoiceField(choices=OfflineSyncStatus.choices)
+    event_type = serializers.CharField()
+    server_record_id = serializers.IntegerField(allow_null=True)
+    server_timestamp = serializers.DateTimeField()
+    message = serializers.CharField()
+
+
+class OfflineSyncBatchResponseSerializer(serializers.Serializer):
+    total_events = serializers.IntegerField()
+    synced_count = serializers.IntegerField()
+    duplicate_count = serializers.IntegerField()
+    failed_count = serializers.IntegerField()
+    results = OfflineSyncEventResultSerializer(many=True)
+
+
+class DriverIncidentReportSerializer(serializers.ModelSerializer):
+    shipment_tracking_number = serializers.CharField(source='shipment.tracking_number', read_only=True)
+    driver_name = serializers.CharField(source='driver.user.get_full_name', read_only=True)
+    reported_by_email = serializers.EmailField(source='reported_by.email', read_only=True)
+
+    class Meta:
+        model = DriverIncidentReport
+        fields = (
+            'id',
+            'shipment',
+            'shipment_tracking_number',
+            'driver',
+            'driver_name',
+            'reported_by',
+            'reported_by_email',
+            'incident_type',
+            'latitude',
+            'longitude',
+            'location_name',
+            'description',
+            'reported_at',
+            'offline_event',
+            'created_at',
+            'updated_at',
+        )
+        read_only_fields = ('id', 'driver', 'reported_by', 'offline_event', 'created_at', 'updated_at')
 
 
 class RatingSerializer(serializers.ModelSerializer):

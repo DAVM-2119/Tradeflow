@@ -1,6 +1,7 @@
 from decimal import Decimal
 from django.db import models
 from django.conf import settings
+from django.utils import timezone
 from apps.accounts.models import TransporterProfile, DriverProfile, ShipperProfile
 
 
@@ -268,7 +269,7 @@ class LocationUpdate(models.Model):
         blank=True,
         related_name='gps_updates'
     )
-    timestamp = models.DateTimeField(auto_now_add=True, db_index=True)
+    timestamp = models.DateTimeField(default=timezone.now, db_index=True)
 
     class Meta:
         verbose_name = 'Location Update'
@@ -304,7 +305,7 @@ class ShipmentMilestone(models.Model):
         blank=True,
         related_name='shipment_milestones'
     )
-    timestamp = models.DateTimeField(auto_now_add=True)
+    timestamp = models.DateTimeField(default=timezone.now)
 
     class Meta:
         verbose_name = 'Shipment Milestone'
@@ -747,3 +748,131 @@ class Rating(models.Model):
 
     def __str__(self):
         return f"Rating: {self.stars} stars ({self.rater.email} -> {self.ratee.email})"
+
+
+# ============================================================================
+# PHASE 9: OFFLINE-FIRST SYNCHRONIZATION & INCIDENT REPORTING MODELS (SRS 2.4, 4.1, 5.2)
+# ============================================================================
+
+class OfflineSyncEventType(models.TextChoices):
+    GPS_UPDATE = 'GPS_UPDATE', 'GPS Location Telemetry'
+    WAYPOINT_CHECKIN = 'WAYPOINT_CHECKIN', 'Waypoint / Check-in Milestone'
+    INCIDENT_REPORT = 'INCIDENT_REPORT', 'Driver Incident Report'
+
+
+class OfflineSyncStatus(models.TextChoices):
+    SYNCED = 'SYNCED', 'Synchronized Successfully'
+    DUPLICATE = 'DUPLICATE', 'Duplicate Event (Idempotent)'
+    REJECTED = 'REJECTED', 'Rejected (Validation / Auth Error)'
+    CONFLICT = 'CONFLICT', 'Conflict (Superseded by Authoritative Event)'
+    FAILED = 'FAILED', 'Processing Failed'
+
+
+class OfflineSyncEvent(models.Model):
+    """
+    Offline synchronization log tracking mobile client event queueing, idempotency key deduplication,
+    and server processing status.
+    """
+    client_event_id = models.CharField(max_length=100, unique=True, db_index=True)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='offline_sync_events'
+    )
+    device_id = models.CharField(max_length=100, blank=True)
+    event_type = models.CharField(
+        max_length=30,
+        choices=OfflineSyncEventType.choices,
+        db_index=True
+    )
+    shipment = models.ForeignKey(
+        Shipment,
+        on_delete=models.CASCADE,
+        related_name='offline_sync_events'
+    )
+    payload = models.JSONField()
+    client_created_at = models.DateTimeField()
+    server_received_at = models.DateTimeField(auto_now_add=True)
+    processed_at = models.DateTimeField(null=True, blank=True)
+    status = models.CharField(
+        max_length=20,
+        choices=OfflineSyncStatus.choices,
+        default=OfflineSyncStatus.SYNCED,
+        db_index=True
+    )
+    retry_count = models.PositiveIntegerField(default=0)
+    error_message = models.TextField(blank=True)
+    server_record_id = models.PositiveBigIntegerField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Offline Sync Event'
+        verbose_name_plural = 'Offline Sync Events'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['user', 'event_type']),
+            models.Index(fields=['shipment', 'status']),
+        ]
+
+    def __str__(self):
+        return f"Offline Event {self.client_event_id} ({self.event_type} - {self.status})"
+
+
+class IncidentType(models.TextChoices):
+    ACCIDENT = 'ACCIDENT', 'Traffic Accident'
+    CHECKPOINT_DELAY = 'CHECKPOINT_DELAY', 'Customs / Police Checkpoint Delay'
+    FUEL_UNAVAILABLE = 'FUEL_UNAVAILABLE', 'Fuel Shortage / Station Unavailable'
+    ROAD_PROBLEM = 'ROAD_PROBLEM', 'Road Damage / Blockade'
+    SECURITY_INCIDENT = 'SECURITY_INCIDENT', 'Security Threat / Armed Unrest'
+    VEHICLE_BREAKDOWN = 'VEHICLE_BREAKDOWN', 'Mechanical Breakdown'
+    OTHER = 'OTHER', 'Other Incident'
+
+
+class DriverIncidentReport(models.Model):
+    """
+    Driver incident report recorded during corridor transport (queued offline or submitted live).
+    """
+    shipment = models.ForeignKey(
+        Shipment,
+        on_delete=models.CASCADE,
+        related_name='incident_reports'
+    )
+    driver = models.ForeignKey(
+        DriverProfile,
+        on_delete=models.CASCADE,
+        related_name='incident_reports'
+    )
+    reported_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='incident_reports_submitted'
+    )
+    incident_type = models.CharField(
+        max_length=30,
+        choices=IncidentType.choices,
+        default=IncidentType.OTHER,
+        db_index=True
+    )
+    latitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    longitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    location_name = models.CharField(max_length=255, blank=True)
+    description = models.TextField()
+    reported_at = models.DateTimeField()
+    offline_event = models.ForeignKey(
+        OfflineSyncEvent,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='incident_reports'
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Driver Incident Report'
+        verbose_name_plural = 'Driver Incident Reports'
+        ordering = ['-reported_at']
+
+    def __str__(self):
+        return f"Incident Report ({self.incident_type}) for {self.shipment.tracking_number} by Driver {self.driver.user.get_full_name()}"

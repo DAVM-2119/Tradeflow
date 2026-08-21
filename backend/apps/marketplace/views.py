@@ -1,12 +1,13 @@
-from django.http import FileResponse
-from rest_framework import generics, status, permissions
-from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework import generics, permissions, status
+from rest_framework.views import APIView
 from rest_framework.response import Response
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from rest_framework.exceptions import PermissionDenied, ValidationError, NotFound
+from django.shortcuts import get_object_or_404
+from django.http import FileResponse, Http404
 from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiResponse
 
-from apps.accounts.models import Role, TransporterProfile, TransporterVerificationAudit, VerificationStatus, DriverProfile
-from apps.accounts.permissions import IsShipper, IsTransporter, IsDriver, IsAdmin, IsOwnerOrAdmin
+from apps.accounts.models import Role, VerificationStatus, TransporterProfile, DriverProfile
 from apps.marketplace.models import (
     Vehicle,
     CargoLoad,
@@ -17,49 +18,16 @@ from apps.marketplace.models import (
     ShipmentStatus,
     LocationUpdate,
     ShipmentMilestone,
-    DocumentType,
     ShipmentDocument,
-    CargoCondition,
-    PODConfirmationStatus,
     ProofOfDelivery,
-    PaymentStatus,
     FreightInvoice,
-    SettlementStatus,
     FreightSettlement,
     Payment,
-    PayoutStatus,
     TransporterPayout,
-    PaymentDisputeStatus,
     PaymentDispute,
+    OfflineSyncEvent,
+    DriverIncidentReport,
     Rating,
-)
-from apps.marketplace.serializers import (
-    VehicleSerializer,
-    TransporterDetailSerializer,
-    TransporterVerificationActionSerializer,
-    TransporterVerificationAuditSerializer,
-    CargoLoadSerializer,
-    BidSerializer,
-    BidCreateSerializer,
-    ShipmentSerializer,
-    LocationUpdateSerializer,
-    ShipmentMilestoneSerializer,
-    AssignDriverSerializer,
-    ShipmentStatusUpdateSerializer,
-    ShipmentDocumentSerializer,
-    ShipmentDocumentUploadSerializer,
-    ProofOfDeliverySerializer,
-    PODCreateSerializer,
-    PODDisputeSerializer,
-    FreightInvoiceSerializer,
-    FreightSettlementSerializer,
-    PaymentSerializer,
-    PaymentInitiateSerializer,
-    TransporterPayoutSerializer,
-    PaymentDisputeSerializer,
-    DisputeRaiseSerializer,
-    DisputeResolveSerializer,
-    RatingSerializer,
 )
 from apps.marketplace.services import (
     VerificationService,
@@ -75,10 +43,12 @@ from apps.marketplace.services import (
     ReconciliationService,
     PayoutService,
     DisputeService,
+    IncidentReportService,
+    OfflineSyncService,
 )
 from apps.marketplace.permissions import (
-    IsVehicleOwnerOrAdmin,
     IsTransporterVerified,
+    IsVehicleOwnerOrAdmin,
     IsLoadOwnerOrAdmin,
     IsBidOwnerOrAdmin,
     IsShipmentParticipantOrAdmin,
@@ -86,276 +56,207 @@ from apps.marketplace.permissions import (
     IsPODConfirmableByShipper,
     IsPaymentParticipantOrAdmin,
     IsDisputeResolvableByAdmin,
+    IsAssignedDriverOrAdmin,
+)
+from apps.marketplace.serializers import (
+    VehicleSerializer,
+    TransporterVerificationActionSerializer,
+    TransporterVerificationAuditSerializer,
+    TransporterDetailSerializer,
+    CargoLoadSerializer,
+    BidSerializer,
+    BidCreateSerializer,
+    LocationUpdateSerializer,
+    ShipmentMilestoneSerializer,
+    ShipmentSerializer,
+    AssignDriverSerializer,
+    ShipmentStatusUpdateSerializer,
+    ShipmentDocumentSerializer,
+    ShipmentDocumentUploadSerializer,
+    ProofOfDeliverySerializer,
+    PODCreateSerializer,
+    PODDisputeSerializer,
+    FreightInvoiceSerializer,
+    FreightSettlementSerializer,
+    PaymentSerializer,
+    PaymentInitiateSerializer,
+    TransporterPayoutSerializer,
+    PaymentDisputeSerializer,
+    DisputeRaiseSerializer,
+    DisputeResolveSerializer,
+    OfflineSyncEventInputSerializer,
+    OfflineSyncBatchInputSerializer,
+    OfflineSyncEventResultSerializer,
+    OfflineSyncBatchResponseSerializer,
+    DriverIncidentReportSerializer,
+    RatingSerializer,
 )
 
 
-class TransporterMeProfileView(generics.RetrieveUpdateAPIView):
-    """
-    Endpoint for authenticated Transporters to view and update their own company profile.
-    Verification status cannot be self-modified.
-    """
-    serializer_class = TransporterDetailSerializer
-    permission_classes = [permissions.IsAuthenticated, IsTransporter]
-
-    def get_object(self):
-        if not hasattr(self.request.user, 'transporter_profile'):
-            raise NotFound("Transporter profile not found for this user.")
-        return self.request.user.transporter_profile
-
-    @extend_schema(summary="Get my transporter profile details and fleet")
-    def get(self, request, *args, **kwargs):
-        return super().get(request, *args, **kwargs)
-
-    @extend_schema(summary="Update my transporter profile information")
-    def patch(self, request, *args, **kwargs):
-        return super().patch(request, *args, **kwargs)
-
-    @extend_schema(exclude=True)
-    def put(self, request, *args, **kwargs):
-        return super().put(request, *args, **kwargs)
-
+# ============================================================================
+# PHASE 4: TRANSPORTER & FLEET VIEWS
+# ============================================================================
 
 class TransporterListView(generics.ListAPIView):
-    """
-    List transporters on the platform.
-    Administrators can see all transporters (including PENDING/SUSPENDED);
-    Shippers and drivers see only VERIFIED transporters.
-    """
-    serializer_class = TransporterDetailSerializer
     permission_classes = [permissions.IsAuthenticated]
+    serializer_class = TransporterDetailSerializer
+    queryset = TransporterProfile.objects.all()
 
-    def get_queryset(self):
+
+class TransporterMeProfileView(generics.RetrieveUpdateAPIView):
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = TransporterDetailSerializer
+
+    def get_object(self):
         user = self.request.user
-        if user.is_superuser or user.role == Role.ADMIN or user.is_staff:
-            return TransporterProfile.objects.all().select_related('user').prefetch_related('vehicles')
-        return TransporterProfile.objects.filter(
-            verification_status=VerificationStatus.VERIFIED
-        ).select_related('user').prefetch_related('vehicles')
-
-    @extend_schema(summary="List marketplace transporters")
-    def get(self, request, *args, **kwargs):
-        return super().get(request, *args, **kwargs)
+        if not hasattr(user, 'transporter_profile'):
+            raise NotFound("Transporter profile not found for this user.")
+        return user.transporter_profile
 
 
 class TransporterVehicleListCreateView(generics.ListCreateAPIView):
-    """
-    Endpoint for a Transporter to list or add vehicles to their own fleet.
-    """
+    permission_classes = [permissions.IsAuthenticated]
     serializer_class = VehicleSerializer
-    permission_classes = [permissions.IsAuthenticated, IsTransporter]
 
     def get_queryset(self):
-        if not hasattr(self.request.user, 'transporter_profile'):
-            return Vehicle.objects.none()
-        return Vehicle.objects.filter(transporter=self.request.user.transporter_profile)
+        user = self.request.user
+        if user.is_superuser or user.role == Role.ADMIN:
+            return Vehicle.objects.all()
+        if hasattr(user, 'transporter_profile'):
+            return Vehicle.objects.filter(transporter=user.transporter_profile)
+        return Vehicle.objects.none()
 
-    @extend_schema(summary="List fleet vehicles for authenticated transporter")
-    def get(self, request, *args, **kwargs):
-        return super().get(request, *args, **kwargs)
+    def perform_create(self, serializer):
+        user = self.request.user
+        if not hasattr(user, 'transporter_profile'):
+            raise PermissionDenied("Only registered Transporters can add fleet vehicles.")
 
-    @extend_schema(summary="Add a new vehicle to transporter fleet")
-    def create(self, request, *args, **kwargs):
-        if not hasattr(request.user, 'transporter_profile'):
-            raise PermissionDenied("User does not have a transporter profile.")
-
-        serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        vehicle = FleetService.add_vehicle(
-            transporter=request.user.transporter_profile,
+        FleetService.add_vehicle(
+            transporter=user.transporter_profile,
             vehicle_data=serializer.validated_data
         )
-        return Response(VehicleSerializer(vehicle).data, status=status.HTTP_201_CREATED)
 
 
 class TransporterVehicleDetailView(generics.RetrieveUpdateDestroyAPIView):
-    """
-    Endpoint to retrieve, update, or remove a fleet vehicle.
-    Access restricted to vehicle owner or Admin.
-    """
-    queryset = Vehicle.objects.all()
-    serializer_class = VehicleSerializer
     permission_classes = [permissions.IsAuthenticated, IsVehicleOwnerOrAdmin]
-
-    @extend_schema(summary="Get fleet vehicle details")
-    def get(self, request, *args, **kwargs):
-        return super().get(request, *args, **kwargs)
-
-    @extend_schema(summary="Update fleet vehicle details")
-    def patch(self, request, *args, **kwargs):
-        return super().patch(request, *args, **kwargs)
-
-    @extend_schema(summary="Deactivate or remove fleet vehicle")
-    def delete(self, request, *args, **kwargs):
-        vehicle = self.get_object()
-        vehicle.is_active = False
-        vehicle.save()
-        return Response(status=status.HTTP_204_NO_CONTENT)
-
-    @extend_schema(exclude=True)
-    def put(self, request, *args, **kwargs):
-        return super().put(request, *args, **kwargs)
+    serializer_class = VehicleSerializer
+    queryset = Vehicle.objects.all()
 
 
-class TransporterVerificationView(generics.GenericAPIView):
-    """
-    ADMIN-ONLY Endpoint to approve/verify or suspend a Transporter account with audit record.
-    """
-    serializer_class = TransporterVerificationActionSerializer
-    permission_classes = [permissions.IsAuthenticated, IsAdmin]
+class TransporterVerificationView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
 
     @extend_schema(
-        summary="Admin Transporter Verification / Suspension Action",
-        description="Transitions a Transporter's verification status to VERIFIED or SUSPENDED with audit record.",
-        responses={200: TransporterDetailSerializer, 400: OpenApiResponse(description="Invalid status transition")}
+        request=TransporterVerificationActionSerializer,
+        responses={200: TransporterDetailSerializer}
     )
-    def post(self, request, pk=None):
-        try:
-            transporter = TransporterProfile.objects.get(pk=pk)
-        except TransporterProfile.DoesNotExist:
-            raise NotFound("Transporter profile not found.")
+    def post(self, request, pk):
+        if not (request.user.is_superuser or request.user.role == Role.ADMIN or request.user.is_staff):
+            raise PermissionDenied("Only administrators can update transporter verification status.")
 
-        serializer = self.get_serializer(data=request.data)
+        transporter = get_object_or_404(TransporterProfile, pk=pk)
+        serializer = TransporterVerificationActionSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        target_status = serializer.validated_data['status']
+        status_val = serializer.validated_data['status']
         reason = serializer.validated_data.get('reason', '')
 
-        if target_status == VerificationStatus.VERIFIED:
-            transporter, audit = VerificationService.verify_transporter(transporter, request.user, reason)
-        elif target_status == VerificationStatus.SUSPENDED:
-            transporter, audit = VerificationService.suspend_transporter(transporter, request.user, reason)
-        else:
-            raise ValidationError("Invalid verification status transition.")
+        if status_val == VerificationStatus.VERIFIED:
+            VerificationService.verify_transporter(transporter, request.user, reason)
+        elif status_val == VerificationStatus.SUSPENDED:
+            VerificationService.suspend_transporter(transporter, request.user, reason)
 
-        return Response(TransporterDetailSerializer(transporter).data, status=status.HTTP_200_OK)
+        return Response(
+            TransporterDetailSerializer(transporter).data,
+            status=status.HTTP_200_OK
+        )
 
 
 class TransporterVerificationAuditListView(generics.ListAPIView):
-    """
-    ADMIN-ONLY Endpoint to retrieve verification audit history for a Transporter.
-    """
+    permission_classes = [permissions.IsAuthenticated]
     serializer_class = TransporterVerificationAuditSerializer
-    permission_classes = [permissions.IsAuthenticated, IsAdmin]
 
     def get_queryset(self):
-        transporter_id = self.kwargs.get('pk')
-        return TransporterVerificationAudit.objects.filter(transporter_id=transporter_id)
+        pk = self.kwargs['pk']
+        transporter = get_object_or_404(TransporterProfile, pk=pk)
+        user = self.request.user
 
-    @extend_schema(summary="Get verification audit history for transporter")
-    def get(self, request, *args, **kwargs):
-        return super().get(request, *args, **kwargs)
+        if user.is_superuser or user.role == Role.ADMIN or (hasattr(user, 'transporter_profile') and user.transporter_profile == transporter):
+            return transporter.verification_audits.all()
 
+        raise PermissionDenied("You do not have permission to view this verification audit log.")
+
+
+# ============================================================================
+# PHASE 5: LOAD & BIDDING VIEWS
+# ============================================================================
 
 class LoadListCreateView(generics.ListCreateAPIView):
-    """
-    Endpoint for listing active spot market cargo loads or posting a new load (Shippers only).
-    Supports query parameters: origin, destination, required_vehicle_type, status.
-    """
-    serializer_class = CargoLoadSerializer
     permission_classes = [permissions.IsAuthenticated]
+    serializer_class = CargoLoadSerializer
 
     def get_queryset(self):
-        qs = CargoLoad.objects.all().select_related('shipper', 'assigned_transporter', 'assigned_vehicle')
-        
+        user = self.request.user
+        if user.is_superuser or user.role == Role.ADMIN:
+            qs = CargoLoad.objects.all()
+        elif hasattr(user, 'shipper_profile'):
+            qs = CargoLoad.objects.filter(shipper=user.shipper_profile)
+        else:
+            qs = CargoLoad.objects.filter(status=LoadStatus.POSTED)
+
         origin = self.request.query_params.get('origin')
+        destination = self.request.query_params.get('destination')
+        required_vehicle_type = self.request.query_params.get('required_vehicle_type')
+
         if origin:
             qs = qs.filter(origin__icontains=origin)
-            
-        destination = self.request.query_params.get('destination')
         if destination:
             qs = qs.filter(destination__icontains=destination)
-            
-        req_type = self.request.query_params.get('required_vehicle_type')
-        if req_type:
-            qs = qs.filter(required_vehicle_type=req_type)
-            
-        load_status = self.request.query_params.get('status')
-        if load_status:
-            qs = qs.filter(status=load_status)
-        elif not (self.request.user.is_superuser or self.request.user.role == Role.ADMIN):
-            qs = qs.filter(status__in=[LoadStatus.POSTED, LoadStatus.ASSIGNED])
-            
+        if required_vehicle_type:
+            qs = qs.filter(required_vehicle_type=required_vehicle_type)
+
         return qs
 
-    @extend_schema(
-        summary="List active spot market cargo loads",
-        parameters=[
-            OpenApiParameter('origin', str, description="Filter by origin location"),
-            OpenApiParameter('destination', str, description="Filter by destination location"),
-            OpenApiParameter('required_vehicle_type', str, description="Filter by vehicle type"),
-            OpenApiParameter('status', str, description="Filter by status (POSTED, ASSIGNED, etc.)"),
-        ]
-    )
-    def get(self, request, *args, **kwargs):
-        return super().get(request, *args, **kwargs)
+    def perform_create(self, serializer):
+        user = self.request.user
+        if not hasattr(user, 'shipper_profile') and not (user.is_superuser or user.role == Role.ADMIN):
+            raise PermissionDenied("Only registered Shippers can post cargo loads.")
 
-    @extend_schema(summary="Post a new cargo load (Shippers/Admins only)")
-    def create(self, request, *args, **kwargs):
-        if not (request.user.is_superuser or request.user.role == Role.ADMIN or request.user.role == Role.SHIPPER):
-            raise PermissionDenied("Only Shippers or Administrators can post cargo loads.")
-            
-        if not hasattr(request.user, 'shipper_profile') and not (request.user.is_superuser or request.user.role == Role.ADMIN):
-            raise PermissionDenied("User does not have a Shipper profile.")
-
-        serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        
-        shipper_profile = getattr(request.user, 'shipper_profile', None)
+        shipper_profile = getattr(user, 'shipper_profile', None)
+        if not shipper_profile and (user.is_superuser or user.role == Role.ADMIN):
+            from apps.accounts.models import ShipperProfile
+            shipper_profile, _ = ShipperProfile.objects.get_or_create(
+                user=user,
+                defaults={'company_name': 'Admin Freight Service'}
+            )
 
         load = LoadService.create_load(
             shipper_profile=shipper_profile,
             load_data=serializer.validated_data
         )
-        return Response(CargoLoadSerializer(load).data, status=status.HTTP_201_CREATED)
+        serializer.instance = load
 
 
-class LoadDetailView(generics.RetrieveUpdateAPIView):
-    """
-    Endpoint to view or update cargo load details.
-    """
-    queryset = CargoLoad.objects.all().select_related('shipper', 'assigned_transporter', 'assigned_vehicle')
+class LoadDetailView(generics.RetrieveUpdateDestroyAPIView):
+    permission_classes = [permissions.IsAuthenticated]
     serializer_class = CargoLoadSerializer
+    queryset = CargoLoad.objects.all()
+
+    def perform_destroy(self, instance):
+        LoadService.cancel_load(instance, self.request.user)
+
+
+class LoadCancelView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
-    @extend_schema(summary="Get cargo load details")
-    def get(self, request, *args, **kwargs):
-        return super().get(request, *args, **kwargs)
-
-    @extend_schema(summary="Update cargo load parameters")
-    def patch(self, request, *args, **kwargs):
-        load = self.get_object()
-        if not (request.user.is_superuser or request.user.role == Role.ADMIN or load.shipper.user == request.user):
-            raise PermissionDenied("Only the load owner shipper or an administrator can update this load.")
-        return super().patch(request, *args, **kwargs)
-
-    @extend_schema(exclude=True)
-    def put(self, request, *args, **kwargs):
-        return super().put(request, *args, **kwargs)
-
-
-class LoadCancelView(generics.GenericAPIView):
-    """
-    Endpoint for a Shipper or Admin to cancel a posted cargo load.
-    """
-    permission_classes = [permissions.IsAuthenticated, IsLoadOwnerOrAdmin]
-    serializer_class = CargoLoadSerializer
-
-    @extend_schema(summary="Cancel a posted cargo load")
-    def post(self, request, pk=None):
-        try:
-            load = CargoLoad.objects.get(pk=pk)
-        except CargoLoad.DoesNotExist:
-            raise NotFound("Cargo load not found.")
-
-        load = LoadService.cancel_load(load, request.user)
-        return Response(CargoLoadSerializer(load).data, status=status.HTTP_200_OK)
+    @extend_schema(responses={200: CargoLoadSerializer})
+    def post(self, request, pk):
+        load = get_object_or_404(CargoLoad, pk=pk)
+        cancelled = LoadService.cancel_load(load, request.user)
+        return Response(CargoLoadSerializer(cancelled).data, status=status.HTTP_200_OK)
 
 
 class LoadBidsListCreateView(generics.ListCreateAPIView):
-    """
-    GET: View bids submitted on a load.
-    POST: Verified Transporter ONLY submits a competitive bid on the load.
-    """
     permission_classes = [permissions.IsAuthenticated]
 
     def get_serializer_class(self):
@@ -364,185 +265,166 @@ class LoadBidsListCreateView(generics.ListCreateAPIView):
         return BidSerializer
 
     def get_queryset(self):
-        load_id = self.kwargs.get('pk')
-        try:
-            load = CargoLoad.objects.get(pk=load_id)
-        except CargoLoad.DoesNotExist:
-            return Bid.objects.none()
-
+        load_id = self.kwargs['pk']
+        load = get_object_or_404(CargoLoad, pk=load_id)
         user = self.request.user
-        if user.is_superuser or user.role == Role.ADMIN or load.shipper.user == user:
-            return Bid.objects.filter(load=load).select_related('transporter', 'proposed_vehicle')
-        elif hasattr(user, 'transporter_profile'):
-            return Bid.objects.filter(load=load, transporter=user.transporter_profile).select_related('transporter', 'proposed_vehicle')
+
+        if user.is_superuser or user.role == Role.ADMIN:
+            return load.bids.all()
+
+        if hasattr(user, 'shipper_profile') and load.shipper == user.shipper_profile:
+            return load.bids.all()
+
+        if hasattr(user, 'transporter_profile'):
+            return load.bids.filter(transporter=user.transporter_profile)
+
         return Bid.objects.none()
 
-    @extend_schema(summary="List bids submitted on a cargo load")
-    def get(self, request, *args, **kwargs):
-        return super().get(request, *args, **kwargs)
+    @extend_schema(
+        request=BidCreateSerializer,
+        responses={201: BidSerializer}
+    )
+    def create(self, request, *args, **kwargs):
+        user = request.user
+        if not hasattr(user, 'transporter_profile'):
+            raise PermissionDenied("Only registered Transporters can submit bids.")
 
-    @extend_schema(summary="Submit a competitive spot market bid (VERIFIED Transporters Only)")
-    def create(self, request, pk=None):
-        try:
-            load = CargoLoad.objects.get(pk=pk)
-        except CargoLoad.DoesNotExist:
-            raise NotFound("Cargo load not found.")
+        if not IsTransporterVerified().has_permission(request, self):
+            raise PermissionDenied(IsTransporterVerified.message)
 
-        if not VerificationService.can_accept_load(request.user):
-            raise PermissionDenied("Unverified or suspended transporters are not permitted to submit bids on loads.")
+        load_id = self.kwargs['pk']
+        load = get_object_or_404(CargoLoad, pk=load_id)
 
         serializer = BidCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
         bid = BiddingService.submit_bid(
-            transporter_user=request.user,
+            transporter_user=user,
             load=load,
             bid_data=serializer.validated_data
         )
-        return Response(BidSerializer(bid).data, status=status.HTTP_201_CREATED)
+
+        return Response(
+            BidSerializer(bid).data,
+            status=status.HTTP_201_CREATED
+        )
 
 
-class BidAcceptView(generics.GenericAPIView):
-    """
-    Endpoint for a Shipper to accept a winning bid on their posted load.
-    Triggers atomic state transition and initializes Shipment execution record.
-    """
+class BidAcceptView(APIView):
     permission_classes = [permissions.IsAuthenticated]
-    serializer_class = CargoLoadSerializer
 
-    @extend_schema(summary="Accept a winning bid (Atomic transaction)")
-    def post(self, request, pk=None):
-        try:
-            bid = Bid.objects.get(pk=pk)
-        except Bid.DoesNotExist:
-            raise NotFound("Bid not found.")
+    @extend_schema(responses={200: CargoLoadSerializer})
+    def post(self, request, pk):
+        bid = get_object_or_404(Bid, pk=pk)
+        load = BiddingService.accept_bid(
+            shipper_user=request.user,
+            bid=bid
+        )
+        return Response(
+            CargoLoadSerializer(load).data,
+            status=status.HTTP_200_OK
+        )
 
-        updated_load = BiddingService.accept_bid(request.user, bid)
-        return Response(CargoLoadSerializer(updated_load).data, status=status.HTTP_200_OK)
 
+class BidWithdrawView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
 
-class BidWithdrawView(generics.GenericAPIView):
-    """
-    Endpoint for a Transporter to withdraw their submitted bid.
-    """
-    permission_classes = [permissions.IsAuthenticated, IsBidOwnerOrAdmin]
-    serializer_class = BidSerializer
-
-    @extend_schema(summary="Withdraw a submitted bid")
-    def post(self, request, pk=None):
-        try:
-            bid = Bid.objects.get(pk=pk)
-        except Bid.DoesNotExist:
-            raise NotFound("Bid not found.")
-
-        updated_bid = BiddingService.withdraw_bid(request.user, bid)
-        return Response(BidSerializer(updated_bid).data, status=status.HTTP_200_OK)
+    @extend_schema(responses={200: BidSerializer})
+    def post(self, request, pk):
+        bid = get_object_or_404(Bid, pk=pk)
+        bid = BiddingService.withdraw_bid(
+            transporter_user=request.user,
+            bid=bid
+        )
+        return Response(
+            BidSerializer(bid).data,
+            status=status.HTTP_200_OK
+        )
 
 
 class TransporterMyBidsView(generics.ListAPIView):
-    """
-    Endpoint for an authenticated Transporter to list all their submitted spot market bids.
-    """
-    serializer_class = BidSerializer
-    permission_classes = [permissions.IsAuthenticated, IsTransporter]
-
-    def get_queryset(self):
-        if not hasattr(self.request.user, 'transporter_profile'):
-            return Bid.objects.none()
-        return Bid.objects.filter(transporter=self.request.user.transporter_profile).select_related('load', 'proposed_vehicle')
-
-    @extend_schema(summary="List my submitted bids")
-    def get(self, request, *args, **kwargs):
-        return super().get(request, *args, **kwargs)
-
-
-class ShipmentListView(generics.ListAPIView):
-    """
-    Endpoint for listing active corridor shipments.
-    Shippers see shipments for their loads; Transporters/Drivers see assigned shipments; Admins see all.
-    """
-    serializer_class = ShipmentSerializer
     permission_classes = [permissions.IsAuthenticated]
+    serializer_class = BidSerializer
 
     def get_queryset(self):
         user = self.request.user
-        qs = Shipment.objects.all().select_related('load', 'transporter', 'vehicle', 'driver')
-        
-        if user.is_superuser or user.role == Role.ADMIN:
-            return qs
-        elif hasattr(user, 'shipper_profile'):
-            return qs.filter(load__shipper=user.shipper_profile)
-        elif hasattr(user, 'transporter_profile'):
-            return qs.filter(transporter=user.transporter_profile)
-        elif hasattr(user, 'driver_profile'):
-            return qs.filter(driver=user.driver_profile)
-            
-        return Shipment.objects.none()
+        if hasattr(user, 'transporter_profile'):
+            return Bid.objects.filter(transporter=user.transporter_profile)
+        return Bid.objects.none()
 
-    @extend_schema(summary="List active corridor shipments")
-    def get(self, request, *args, **kwargs):
-        return super().get(request, *args, **kwargs)
+
+# ============================================================================
+# PHASE 6: SHIPMENT EXECUTION & TRACKING VIEWS
+# ============================================================================
+
+class ShipmentListView(generics.ListAPIView):
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = ShipmentSerializer
+
+    def get_queryset(self):
+        user = self.request.user
+        if user.is_superuser or user.role == Role.ADMIN:
+            return Shipment.objects.all()
+
+        if hasattr(user, 'shipper_profile'):
+            return Shipment.objects.filter(load__shipper=user.shipper_profile)
+
+        if hasattr(user, 'transporter_profile'):
+            return Shipment.objects.filter(transporter=user.transporter_profile)
+
+        if hasattr(user, 'driver_profile'):
+            return Shipment.objects.filter(driver=user.driver_profile)
+
+        return Shipment.objects.none()
 
 
 class ShipmentDetailView(generics.RetrieveAPIView):
-    """
-    Endpoint to view detailed shipment information, status milestones, and latest GPS location.
-    """
-    queryset = Shipment.objects.all().select_related('load', 'transporter', 'vehicle', 'driver')
+    permission_classes = [permissions.IsAuthenticated, IsShipmentParticipantOrAdmin]
     serializer_class = ShipmentSerializer
-    permission_classes = [permissions.IsAuthenticated, IsShipmentParticipantOrAdmin]
-
-    @extend_schema(summary="Get shipment execution details and tracking info")
-    def get(self, request, *args, **kwargs):
-        return super().get(request, *args, **kwargs)
+    queryset = Shipment.objects.all()
 
 
-class ShipmentAssignDriverView(generics.GenericAPIView):
-    """
-    Endpoint for Transporter or Admin to assign a Driver to a shipment.
-    """
-    serializer_class = AssignDriverSerializer
-    permission_classes = [permissions.IsAuthenticated, IsShipmentParticipantOrAdmin]
+class ShipmentAssignDriverView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
 
-    @extend_schema(summary="Assign a driver to a shipment")
-    def post(self, request, pk=None):
-        try:
-            shipment = Shipment.objects.get(pk=pk)
-        except Shipment.DoesNotExist:
-            raise NotFound("Shipment not found.")
-
-        self.check_object_permissions(request, shipment)
-
-        serializer = self.get_serializer(data=request.data)
+    @extend_schema(
+        request=AssignDriverSerializer,
+        responses={200: ShipmentSerializer}
+    )
+    def post(self, request, pk):
+        shipment = get_object_or_404(Shipment, pk=pk)
+        serializer = AssignDriverSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
         driver_id = serializer.validated_data['driver_id']
-        try:
-            driver = DriverProfile.objects.get(pk=driver_id)
-        except DriverProfile.DoesNotExist:
-            raise NotFound("Driver profile not found.")
+        driver = get_object_or_404(DriverProfile, pk=driver_id)
 
-        updated_shipment = TrackingService.assign_driver(shipment, driver, request.user)
-        return Response(ShipmentSerializer(updated_shipment).data, status=status.HTTP_200_OK)
+        if driver.transporter != shipment.transporter:
+            raise ValidationError({'driver_id': 'The specified driver does not belong to your fleet.'})
+
+        updated_shipment = TrackingService.assign_driver(
+            shipment=shipment,
+            driver=driver,
+            user=request.user
+        )
+        return Response(
+            ShipmentSerializer(updated_shipment).data,
+            status=status.HTTP_200_OK
+        )
 
 
-class ShipmentStatusUpdateView(generics.GenericAPIView):
-    """
-    Endpoint for Driver, Transporter, or Admin to update shipment status (e.g. AT_PICKUP, IN_TRANSIT, DELIVERED).
-    """
-    serializer_class = ShipmentStatusUpdateSerializer
+class ShipmentStatusUpdateView(APIView):
     permission_classes = [permissions.IsAuthenticated, IsShipmentParticipantOrAdmin]
 
-    @extend_schema(summary="Update shipment execution status with milestone log")
-    def post(self, request, pk=None):
-        try:
-            shipment = Shipment.objects.get(pk=pk)
-        except Shipment.DoesNotExist:
-            raise NotFound("Shipment not found.")
-
+    @extend_schema(
+        request=ShipmentStatusUpdateSerializer,
+        responses={200: ShipmentSerializer}
+    )
+    def post(self, request, pk):
+        shipment = get_object_or_404(Shipment, pk=pk)
         self.check_object_permissions(request, shipment)
 
-        serializer = self.get_serializer(data=request.data)
+        serializer = ShipmentStatusUpdateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
         new_status = serializer.validated_data['status']
@@ -556,211 +438,143 @@ class ShipmentStatusUpdateView(generics.GenericAPIView):
             location_name=location_name,
             notes=notes
         )
-        return Response(ShipmentSerializer(updated_shipment).data, status=status.HTTP_200_OK)
+        return Response(
+            ShipmentSerializer(updated_shipment).data,
+            status=status.HTTP_200_OK
+        )
 
 
-class ShipmentLocationView(generics.GenericAPIView):
-    """
-    Endpoint for Driver, Transporter, or Admin to record real-time GPS telemetry location update.
-    """
-    serializer_class = LocationUpdateSerializer
+class ShipmentLocationView(APIView):
     permission_classes = [permissions.IsAuthenticated, IsShipmentParticipantOrAdmin]
 
-    @extend_schema(summary="Submit GPS telemetry ping for shipment in transit")
-    def post(self, request, pk=None):
-        try:
-            shipment = Shipment.objects.get(pk=pk)
-        except Shipment.DoesNotExist:
-            raise NotFound("Shipment not found.")
-
+    @extend_schema(
+        request=LocationUpdateSerializer,
+        responses={201: LocationUpdateSerializer}
+    )
+    def post(self, request, pk):
+        shipment = get_object_or_404(Shipment, pk=pk)
         self.check_object_permissions(request, shipment)
 
-        latitude = request.data.get('latitude')
-        longitude = request.data.get('longitude')
-
-        if latitude is None or longitude is None:
-            raise ValidationError({"latitude": "Latitude and longitude are required."})
-
-        speed = request.data.get('speed_kmh')
-        heading = request.data.get('heading_degrees')
-        location_name = request.data.get('location_name', '')
+        serializer = LocationUpdateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
 
         location_update = TrackingService.record_location(
             shipment=shipment,
-            latitude=float(latitude),
-            longitude=float(longitude),
-            speed_kmh=float(speed) if speed is not None else None,
-            heading_degrees=float(heading) if heading is not None else None,
-            location_name=location_name,
+            latitude=serializer.validated_data['latitude'],
+            longitude=serializer.validated_data['longitude'],
+            speed_kmh=serializer.validated_data.get('speed_kmh'),
+            heading_degrees=serializer.validated_data.get('heading_degrees'),
+            location_name=serializer.validated_data.get('location_name', ''),
             user=request.user
         )
-        return Response(LocationUpdateSerializer(location_update).data, status=status.HTTP_201_CREATED)
+        return Response(
+            LocationUpdateSerializer(location_update).data,
+            status=status.HTTP_201_CREATED
+        )
+
+    def get(self, request, pk):
+        shipment = get_object_or_404(Shipment, pk=pk)
+        self.check_object_permissions(request, shipment)
+
+        latest = shipment.location_updates.first()
+        if not latest:
+            raise NotFound("No location updates found for this shipment.")
+
+        return Response(LocationUpdateSerializer(latest).data, status=status.HTTP_200_OK)
 
 
-class ShipmentTrackingHistoryView(generics.GenericAPIView):
-    """
-    Endpoint to retrieve complete GPS location history and milestone audit trail for a shipment.
-    """
+class ShipmentTrackingHistoryView(APIView):
     permission_classes = [permissions.IsAuthenticated, IsShipmentParticipantOrAdmin]
 
-    @extend_schema(summary="Get full GPS location tracking history and milestone trail")
-    def get(self, request, pk=None):
-        try:
-            shipment = Shipment.objects.get(pk=pk)
-        except Shipment.DoesNotExist:
-            raise NotFound("Shipment not found.")
-
+    @extend_schema(responses={200: ShipmentSerializer})
+    def get(self, request, pk):
+        shipment = get_object_or_404(Shipment, pk=pk)
         self.check_object_permissions(request, shipment)
 
-        location_updates = LocationUpdate.objects.filter(shipment=shipment)
-        milestones = ShipmentMilestone.objects.filter(shipment=shipment)
-
-        return Response({
-            "tracking_number": shipment.tracking_number,
-            "status": shipment.status,
-            "origin": shipment.origin,
-            "destination": shipment.destination,
-            "milestones": ShipmentMilestoneSerializer(milestones, many=True).data,
-            "location_updates": LocationUpdateSerializer(location_updates, many=True).data
-        }, status=status.HTTP_200_OK)
+        data = ShipmentSerializer(shipment).data
+        data['location_updates'] = LocationUpdateSerializer(shipment.location_updates.all(), many=True).data
+        return Response(data, status=status.HTTP_200_OK)
 
 
-class ShipmentDocumentListUploadView(generics.GenericAPIView):
-    """
-    GET: List all documents uploaded for a shipment.
-    POST: Upload a new logistics document (Waybill, Customs Release, Invoice, etc.) using multipart/form-data.
-    """
-    parser_classes = [MultiPartParser, FormParser]
+# ============================================================================
+# PHASE 7: DOCUMENT MANAGEMENT & DIGITAL PROOF OF DELIVERY (e-POD) VIEWS
+# ============================================================================
+
+class ShipmentDocumentListUploadView(APIView):
     permission_classes = [permissions.IsAuthenticated, IsShipmentDocumentParticipantOrAdmin]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
 
-    def get_serializer_class(self):
-        if self.request.method == 'POST':
-            return ShipmentDocumentUploadSerializer
-        return ShipmentDocumentSerializer
-
-    @extend_schema(summary="List documents for a shipment")
-    def get(self, request, pk=None):
-        try:
-            shipment = Shipment.objects.get(pk=pk)
-        except Shipment.DoesNotExist:
-            raise NotFound("Shipment not found.")
-
+    @extend_schema(responses={200: ShipmentDocumentSerializer(many=True)})
+    def get(self, request, pk):
+        shipment = get_object_or_404(Shipment, pk=pk)
         self.check_object_permissions(request, shipment)
-        docs = ShipmentDocument.objects.filter(shipment=shipment)
-        return Response(ShipmentDocumentSerializer(docs, many=True).data, status=status.HTTP_200_OK)
+        documents = shipment.documents.all()
+        return Response(ShipmentDocumentSerializer(documents, many=True).data, status=status.HTTP_200_OK)
 
-    @extend_schema(summary="Upload a shipment logistics document (Max 10MB, white-listed extensions)")
-    def post(self, request, pk=None):
-        try:
-            shipment = Shipment.objects.get(pk=pk)
-        except Shipment.DoesNotExist:
-            raise NotFound("Shipment not found.")
-
+    @extend_schema(
+        request=ShipmentDocumentUploadSerializer,
+        responses={201: ShipmentDocumentSerializer}
+    )
+    def post(self, request, pk):
+        shipment = get_object_or_404(Shipment, pk=pk)
         self.check_object_permissions(request, shipment)
 
         serializer = ShipmentDocumentUploadSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        file_obj = serializer.validated_data['file']
-        document_type = serializer.validated_data.get('document_type', DocumentType.WAYBILL)
-        notes = serializer.validated_data.get('notes', '')
-
         document = DocumentService.upload_document(
             shipment=shipment,
-            file_obj=file_obj,
-            document_type=document_type,
+            file_obj=serializer.validated_data['file'],
+            document_type=serializer.validated_data['document_type'],
             user=request.user,
-            notes=notes
+            notes=serializer.validated_data.get('notes', '')
         )
         return Response(ShipmentDocumentSerializer(document).data, status=status.HTTP_201_CREATED)
 
 
-class DocumentDetailView(generics.GenericAPIView):
-    """
-    GET: Retrieve document metadata.
-    DELETE: Delete a document (Uploader or Admin).
-    """
+class DocumentDetailView(generics.RetrieveDestroyAPIView):
     permission_classes = [permissions.IsAuthenticated, IsShipmentDocumentParticipantOrAdmin]
     serializer_class = ShipmentDocumentSerializer
+    queryset = ShipmentDocument.objects.all()
 
-    @extend_schema(summary="Get document metadata")
-    def get(self, request, pk=None):
-        try:
-            document = ShipmentDocument.objects.get(pk=pk)
-        except ShipmentDocument.DoesNotExist:
-            raise NotFound("Document not found.")
-
-        self.check_object_permissions(request, document)
-        return Response(ShipmentDocumentSerializer(document).data, status=status.HTTP_200_OK)
-
-    @extend_schema(summary="Delete a shipment document")
-    def delete(self, request, pk=None):
-        try:
-            document = ShipmentDocument.objects.get(pk=pk)
-        except ShipmentDocument.DoesNotExist:
-            raise NotFound("Document not found.")
-
-        self.check_object_permissions(request, document)
-        DocumentService.delete_document(document, request.user)
-        return Response(status=status.HTTP_204_NO_CONTENT)
+    def perform_destroy(self, instance):
+        DocumentService.delete_document(instance, self.request.user)
 
 
-class DocumentDownloadView(generics.GenericAPIView):
-    """
-    GET: Protected file download endpoint returning Django FileResponse for authorized participants.
-    """
+class DocumentDownloadView(APIView):
     permission_classes = [permissions.IsAuthenticated, IsShipmentDocumentParticipantOrAdmin]
 
-    @extend_schema(summary="Download protected shipment document file")
-    def get(self, request, pk=None):
-        try:
-            document = ShipmentDocument.objects.get(pk=pk)
-        except ShipmentDocument.DoesNotExist:
-            raise NotFound("Document not found.")
-
+    def get(self, request, pk):
+        document = get_object_or_404(ShipmentDocument, pk=pk)
         self.check_object_permissions(request, document)
 
         if not document.file:
-            raise NotFound("Document file not found on disk.")
+            raise Http404("Document file not found.")
 
         response = FileResponse(document.file.open('rb'), content_type=document.mime_type)
         response['Content-Disposition'] = f'attachment; filename="{document.file_name}"'
         return response
 
 
-class ShipmentPODView(generics.GenericAPIView):
-    """
-    GET: Retrieve digital Proof of Delivery (e-POD) for a shipment.
-    POST: Driver or Transporter submits e-POD details, automatically setting shipment status to DELIVERED.
-    """
+class ShipmentPODView(APIView):
     permission_classes = [permissions.IsAuthenticated, IsShipmentParticipantOrAdmin]
 
-    def get_serializer_class(self):
-        if self.request.method == 'POST':
-            return PODCreateSerializer
-        return ProofOfDeliverySerializer
-
-    @extend_schema(summary="Get digital Proof of Delivery (e-POD) for a shipment")
-    def get(self, request, pk=None):
-        try:
-            shipment = Shipment.objects.get(pk=pk)
-        except Shipment.DoesNotExist:
-            raise NotFound("Shipment not found.")
-
+    @extend_schema(responses={200: ProofOfDeliverySerializer})
+    def get(self, request, pk):
+        shipment = get_object_or_404(Shipment, pk=pk)
         self.check_object_permissions(request, shipment)
 
         if not hasattr(shipment, 'pod'):
-            raise NotFound("Proof of Delivery has not been submitted for this shipment.")
+            raise NotFound("Proof of Delivery has not yet been submitted for this shipment.")
 
         return Response(ProofOfDeliverySerializer(shipment.pod).data, status=status.HTTP_200_OK)
 
-    @extend_schema(summary="Submit digital Proof of Delivery (e-POD)")
-    def post(self, request, pk=None):
-        try:
-            shipment = Shipment.objects.get(pk=pk)
-        except Shipment.DoesNotExist:
-            raise NotFound("Shipment not found.")
-
+    @extend_schema(
+        request=PODCreateSerializer,
+        responses={201: ProofOfDeliverySerializer}
+    )
+    def post(self, request, pk):
+        shipment = get_object_or_404(Shipment, pk=pk)
         self.check_object_permissions(request, shipment)
 
         serializer = PODCreateSerializer(data=request.data)
@@ -774,47 +588,37 @@ class ShipmentPODView(generics.GenericAPIView):
         return Response(ProofOfDeliverySerializer(pod).data, status=status.HTTP_201_CREATED)
 
 
-class PODConfirmView(generics.GenericAPIView):
-    """
-    POST: Shipper load owner confirms e-POD delivery (sets status to CONFIRMED).
-    """
+class PODConfirmView(APIView):
     permission_classes = [permissions.IsAuthenticated, IsPODConfirmableByShipper]
-    serializer_class = ProofOfDeliverySerializer
 
-    @extend_schema(summary="Confirm e-POD delivery (Shipper load owner only)")
-    def post(self, request, pk=None):
-        try:
-            pod = ProofOfDelivery.objects.get(pk=pk)
-        except ProofOfDelivery.DoesNotExist:
-            raise NotFound("Proof of Delivery not found.")
-
+    @extend_schema(responses={200: ProofOfDeliverySerializer})
+    def post(self, request, pk):
+        pod = get_object_or_404(ProofOfDelivery, pk=pk)
         self.check_object_permissions(request, pod)
 
         confirmed_pod = PODService.confirm_pod(pod, request.user)
         return Response(ProofOfDeliverySerializer(confirmed_pod).data, status=status.HTTP_200_OK)
 
 
-class PODDisputeView(generics.GenericAPIView):
-    """
-    POST: Shipper load owner disputes e-POD delivery with dispute reason.
-    """
+class PODDisputeView(APIView):
     permission_classes = [permissions.IsAuthenticated, IsPODConfirmableByShipper]
-    serializer_class = PODDisputeSerializer
 
-    @extend_schema(summary="Dispute e-POD delivery (Shipper load owner only)")
-    def post(self, request, pk=None):
-        try:
-            pod = ProofOfDelivery.objects.get(pk=pk)
-        except ProofOfDelivery.DoesNotExist:
-            raise NotFound("Proof of Delivery not found.")
-
+    @extend_schema(
+        request=PODDisputeSerializer,
+        responses={200: ProofOfDeliverySerializer}
+    )
+    def post(self, request, pk):
+        pod = get_object_or_404(ProofOfDelivery, pk=pk)
         self.check_object_permissions(request, pod)
 
         serializer = PODDisputeSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        dispute_reason = serializer.validated_data['dispute_reason']
-        disputed_pod = PODService.dispute_pod(pod, request.user, dispute_reason)
+        disputed_pod = PODService.dispute_pod(
+            pod=pod,
+            shipper_user=request.user,
+            dispute_reason=serializer.validated_data['dispute_reason']
+        )
         return Response(ProofOfDeliverySerializer(disputed_pod).data, status=status.HTTP_200_OK)
 
 
@@ -822,26 +626,41 @@ class PODDisputeView(generics.GenericAPIView):
 # PHASE 8: PAYMENTS & FREIGHT SETTLEMENT VIEWS (FR-10)
 # ============================================================================
 
-class PaymentInitiateView(generics.GenericAPIView):
-    """
-    POST: Initiate a freight payment with idempotency key enforcement.
-    """
-    serializer_class = PaymentInitiateSerializer
+class PaymentListView(generics.ListAPIView):
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = PaymentSerializer
+
+    def get_queryset(self):
+        user = self.request.user
+        if user.is_superuser or user.role == Role.ADMIN:
+            return Payment.objects.all()
+        return Payment.objects.filter(payer=user)
+
+
+class PaymentDetailView(generics.RetrieveAPIView):
+    permission_classes = [permissions.IsAuthenticated, IsPaymentParticipantOrAdmin]
+    serializer_class = PaymentSerializer
+    queryset = Payment.objects.all()
+
+
+class PaymentInitiateView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
-    @extend_schema(summary="Initiate payment transaction (Idempotent)")
+    @extend_schema(
+        request=PaymentInitiateSerializer,
+        responses={201: PaymentSerializer}
+    )
     def post(self, request):
-        serializer = self.get_serializer(data=request.data)
+        serializer = PaymentInitiateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
         settlement_id = serializer.validated_data['settlement_id']
         idempotency_key = serializer.validated_data['idempotency_key']
         provider_name = serializer.validated_data.get('provider_name', 'MOCK')
 
-        try:
-            settlement = FreightSettlement.objects.get(pk=settlement_id)
-        except FreightSettlement.DoesNotExist:
-            raise NotFound("Freight settlement not found.")
+        settlement = get_object_or_404(FreightSettlement, pk=settlement_id)
+        if not (request.user.is_superuser or request.user.role == Role.ADMIN or (hasattr(request.user, 'shipper_profile') and settlement.shipment.load.shipper == request.user.shipper_profile)):
+            raise PermissionDenied("Only the load-owning shipper or an administrator can initiate payment.")
 
         payment = PaymentService.initiate_payment(
             settlement=settlement,
@@ -852,281 +671,194 @@ class PaymentInitiateView(generics.GenericAPIView):
         return Response(PaymentSerializer(payment).data, status=status.HTTP_201_CREATED)
 
 
-class PaymentListView(generics.ListAPIView):
-    """
-    GET: List payment transactions for authenticated participant or Admin.
-    """
-    serializer_class = PaymentSerializer
+class PaymentVerifyView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
-    def get_queryset(self):
-        user = self.request.user
-        if user.is_superuser or user.role == Role.ADMIN:
-            return Payment.objects.all().select_related('shipment', 'settlement', 'payer')
-        elif hasattr(user, 'shipper_profile'):
-            return Payment.objects.filter(shipment__load__shipper=user.shipper_profile).select_related('shipment', 'settlement', 'payer')
-        elif hasattr(user, 'transporter_profile'):
-            return Payment.objects.filter(shipment__transporter=user.transporter_profile).select_related('shipment', 'settlement', 'payer')
-        return Payment.objects.none()
-
-    @extend_schema(summary="List payment transactions")
-    def get(self, request, *args, **kwargs):
-        return super().get(request, *args, **kwargs)
+    @extend_schema(responses={200: PaymentSerializer})
+    def post(self, request, pk):
+        payment = get_object_or_404(Payment, pk=pk)
+        verified = PaymentService.verify_and_confirm_payment(payment, request.user)
+        return Response(PaymentSerializer(verified).data, status=status.HTTP_200_OK)
 
 
-class PaymentDetailView(generics.RetrieveAPIView):
-    """
-    GET: Retrieve details of a payment transaction.
-    """
-    queryset = Payment.objects.all().select_related('shipment', 'settlement', 'payer')
-    serializer_class = PaymentSerializer
-    permission_classes = [permissions.IsAuthenticated, IsPaymentParticipantOrAdmin]
+class PaymentReconcileView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
 
-    @extend_schema(summary="Get payment transaction details")
-    def get(self, request, *args, **kwargs):
-        return super().get(request, *args, **kwargs)
-
-
-class PaymentVerifyView(generics.GenericAPIView):
-    """
-    POST: Verify payment transaction status with PaymentProvider.
-    """
-    serializer_class = PaymentSerializer
-    permission_classes = [permissions.IsAuthenticated, IsPaymentParticipantOrAdmin]
-
-    @extend_schema(summary="Verify payment transaction with payment provider")
-    def post(self, request, pk=None):
-        try:
-            payment = Payment.objects.get(pk=pk)
-        except Payment.DoesNotExist:
-            raise NotFound("Payment not found.")
-
-        self.check_object_permissions(request, payment)
-        verified_payment = PaymentService.verify_and_confirm_payment(payment, request.user)
-        return Response(PaymentSerializer(verified_payment).data, status=status.HTTP_200_OK)
-
-
-class PaymentReconcileView(generics.GenericAPIView):
-    """
-    POST: ADMIN-ONLY Endpoint to reconcile internal payment against provider transaction status.
-    """
-    permission_classes = [permissions.IsAuthenticated, IsAdmin]
-
-    @extend_schema(summary="Reconcile payment transaction against provider (Admin only)")
-    def post(self, request, pk=None):
-        try:
-            payment = Payment.objects.get(pk=pk)
-        except Payment.DoesNotExist:
-            raise NotFound("Payment not found.")
-
-        report = ReconciliationService.reconcile_payment(payment)
-        return Response(report, status=status.HTTP_200_OK)
+    def post(self, request, pk):
+        payment = get_object_or_404(Payment, pk=pk)
+        result = ReconciliationService.reconcile_payment(payment)
+        return Response(result, status=status.HTTP_200_OK)
 
 
 class ShipmentPaymentsView(generics.ListAPIView):
-    """
-    GET: List payments for a specific shipment.
-    """
-    serializer_class = PaymentSerializer
     permission_classes = [permissions.IsAuthenticated, IsShipmentParticipantOrAdmin]
+    serializer_class = PaymentSerializer
 
     def get_queryset(self):
-        shipment_id = self.kwargs.get('pk')
-        return Payment.objects.filter(shipment_id=shipment_id).select_related('settlement', 'payer')
-
-    @extend_schema(summary="Get payment transactions for a specific shipment")
-    def get(self, request, *args, **kwargs):
-        return super().get(request, *args, **kwargs)
+        shipment_id = self.kwargs['pk']
+        shipment = get_object_or_404(Shipment, pk=shipment_id)
+        self.check_object_permissions(self.request, shipment)
+        return shipment.payments.all()
 
 
 class FreightInvoiceListView(generics.ListAPIView):
-    """
-    GET: List freight invoices.
-    """
-    serializer_class = FreightInvoiceSerializer
     permission_classes = [permissions.IsAuthenticated]
+    serializer_class = FreightInvoiceSerializer
 
     def get_queryset(self):
         user = self.request.user
         if user.is_superuser or user.role == Role.ADMIN:
-            return FreightInvoice.objects.all().select_related('shipment', 'issuer', 'payer')
-        elif hasattr(user, 'shipper_profile'):
-            return FreightInvoice.objects.filter(shipment__load__shipper=user.shipper_profile).select_related('shipment', 'issuer', 'payer')
-        elif hasattr(user, 'transporter_profile'):
-            return FreightInvoice.objects.filter(shipment__transporter=user.transporter_profile).select_related('shipment', 'issuer', 'payer')
-        return FreightInvoice.objects.none()
-
-    @extend_schema(summary="List freight invoices")
-    def get(self, request, *args, **kwargs):
-        return super().get(request, *args, **kwargs)
+            return FreightInvoice.objects.all()
+        return FreightInvoice.objects.filter(payer=user)
 
 
 class FreightInvoiceDetailView(generics.RetrieveAPIView):
-    """
-    GET: Retrieve freight invoice details.
-    """
-    queryset = FreightInvoice.objects.all().select_related('shipment', 'issuer', 'payer')
+    permission_classes = [permissions.IsAuthenticated]
     serializer_class = FreightInvoiceSerializer
-    permission_classes = [permissions.IsAuthenticated, IsPaymentParticipantOrAdmin]
-
-    @extend_schema(summary="Get freight invoice details")
-    def get(self, request, *args, **kwargs):
-        return super().get(request, *args, **kwargs)
+    queryset = FreightInvoice.objects.all()
 
 
-class FreightSettlementCreateView(generics.GenericAPIView):
-    """
-    POST: Create freight settlement for a completed shipment.
-    """
-    serializer_class = FreightSettlementSerializer
+class FreightSettlementCreateView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
-    @extend_schema(summary="Create freight settlement for a shipment")
+    @extend_schema(responses={201: FreightSettlementSerializer})
     def post(self, request):
         shipment_id = request.data.get('shipment_id')
         if not shipment_id:
             raise ValidationError({'shipment_id': 'shipment_id is required.'})
 
-        try:
-            shipment = Shipment.objects.get(pk=shipment_id)
-        except Shipment.DoesNotExist:
-            raise NotFound("Shipment not found.")
-
-        # Permission check
-        is_shipper = hasattr(request.user, 'shipper_profile') and shipment.load.shipper == request.user.shipper_profile
-        is_transporter = hasattr(request.user, 'transporter_profile') and shipment.transporter == request.user.transporter_profile
-        is_admin = request.user.is_superuser or request.user.role == Role.ADMIN
-
-        if not (is_shipper or is_transporter or is_admin):
-            raise PermissionDenied("Only shipment participants or administrators can generate a settlement.")
-
+        shipment = get_object_or_404(Shipment, pk=shipment_id)
         settlement = SettlementService.create_settlement_for_shipment(shipment)
         return Response(FreightSettlementSerializer(settlement).data, status=status.HTTP_201_CREATED)
 
 
 class FreightSettlementListView(generics.ListAPIView):
-    """
-    GET: List freight settlements.
-    """
-    serializer_class = FreightSettlementSerializer
     permission_classes = [permissions.IsAuthenticated]
+    serializer_class = FreightSettlementSerializer
 
     def get_queryset(self):
         user = self.request.user
         if user.is_superuser or user.role == Role.ADMIN:
-            return FreightSettlement.objects.all().select_related('shipment', 'invoice')
-        elif hasattr(user, 'shipper_profile'):
-            return FreightSettlement.objects.filter(shipment__load__shipper=user.shipper_profile).select_related('shipment', 'invoice')
-        elif hasattr(user, 'transporter_profile'):
-            return FreightSettlement.objects.filter(shipment__transporter=user.transporter_profile).select_related('shipment', 'invoice')
+            return FreightSettlement.objects.all()
+        if hasattr(user, 'shipper_profile'):
+            return FreightSettlement.objects.filter(shipment__load__shipper=user.shipper_profile)
+        if hasattr(user, 'transporter_profile'):
+            return FreightSettlement.objects.filter(shipment__transporter=user.transporter_profile)
         return FreightSettlement.objects.none()
-
-    @extend_schema(summary="List freight settlements")
-    def get(self, request, *args, **kwargs):
-        return super().get(request, *args, **kwargs)
 
 
 class FreightSettlementDetailView(generics.RetrieveAPIView):
-    """
-    GET: Retrieve freight settlement details.
-    """
-    queryset = FreightSettlement.objects.all().select_related('shipment', 'invoice')
-    serializer_class = FreightSettlementSerializer
     permission_classes = [permissions.IsAuthenticated, IsPaymentParticipantOrAdmin]
-
-    @extend_schema(summary="Get freight settlement details")
-    def get(self, request, *args, **kwargs):
-        return super().get(request, *args, **kwargs)
+    serializer_class = FreightSettlementSerializer
+    queryset = FreightSettlement.objects.all()
 
 
-class FreightSettlementDisputeView(generics.GenericAPIView):
-    """
-    POST: Raise a financial dispute on a freight settlement.
-    """
-    serializer_class = DisputeRaiseSerializer
+class FreightSettlementDisputeView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
-    @extend_schema(summary="Raise a payment settlement dispute")
-    def post(self, request, pk=None):
-        try:
-            settlement = FreightSettlement.objects.get(pk=pk)
-        except FreightSettlement.DoesNotExist:
-            raise NotFound("Freight settlement not found.")
-
-        serializer = self.get_serializer(data=request.data)
+    @extend_schema(
+        request=DisputeRaiseSerializer,
+        responses={201: PaymentDisputeSerializer}
+    )
+    def post(self, request, pk):
+        settlement = get_object_or_404(FreightSettlement, pk=pk)
+        serializer = DisputeRaiseSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        reason = serializer.validated_data['reason']
-        dispute = DisputeService.raise_dispute(settlement, request.user, reason)
+        dispute = DisputeService.raise_dispute(
+            settlement=settlement,
+            user=request.user,
+            reason=serializer.validated_data['reason']
+        )
         return Response(PaymentDisputeSerializer(dispute).data, status=status.HTTP_201_CREATED)
 
 
 class TransporterPayoutListView(generics.ListAPIView):
-    """
-    GET: List transporter payouts.
-    """
-    serializer_class = TransporterPayoutSerializer
     permission_classes = [permissions.IsAuthenticated]
+    serializer_class = TransporterPayoutSerializer
 
     def get_queryset(self):
         user = self.request.user
         if user.is_superuser or user.role == Role.ADMIN:
-            return TransporterPayout.objects.all().select_related('settlement', 'transporter')
-        elif hasattr(user, 'transporter_profile'):
-            return TransporterPayout.objects.filter(transporter=user.transporter_profile).select_related('settlement', 'transporter')
+            return TransporterPayout.objects.all()
+        if hasattr(user, 'transporter_profile'):
+            return TransporterPayout.objects.filter(transporter=user.transporter_profile)
         return TransporterPayout.objects.none()
-
-    @extend_schema(summary="List transporter payouts")
-    def get(self, request, *args, **kwargs):
-        return super().get(request, *args, **kwargs)
 
 
 class TransporterPayoutDetailView(generics.RetrieveAPIView):
-    """
-    GET: Retrieve transporter payout details.
-    """
-    queryset = TransporterPayout.objects.all().select_related('settlement', 'transporter')
+    permission_classes = [permissions.IsAuthenticated]
     serializer_class = TransporterPayoutSerializer
-    permission_classes = [permissions.IsAuthenticated, IsPaymentParticipantOrAdmin]
-
-    @extend_schema(summary="Get transporter payout details")
-    def get(self, request, *args, **kwargs):
-        return super().get(request, *args, **kwargs)
+    queryset = TransporterPayout.objects.all()
 
 
-class TransporterPayoutProcessView(generics.GenericAPIView):
-    """
-    POST: ADMIN-ONLY Endpoint to process transporter payout transfer.
-    """
-    permission_classes = [permissions.IsAuthenticated, IsAdmin]
-    serializer_class = TransporterPayoutSerializer
+class TransporterPayoutProcessView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
 
-    @extend_schema(summary="Process transporter payout transfer (Admin only)")
-    def post(self, request, pk=None):
-        try:
-            payout = TransporterPayout.objects.get(pk=pk)
-        except TransporterPayout.DoesNotExist:
-            raise NotFound("Transporter payout not found.")
+    @extend_schema(responses={200: TransporterPayoutSerializer})
+    def post(self, request, pk):
+        if not (request.user.is_superuser or request.user.role == Role.ADMIN or request.user.is_staff):
+            raise PermissionDenied("Only administrators can process transporter payouts.")
 
-        processed_payout = PayoutService.process_payout(payout, request.user)
-        return Response(TransporterPayoutSerializer(processed_payout).data, status=status.HTTP_200_OK)
+        payout = get_object_or_404(TransporterPayout, pk=pk)
+        processed = PayoutService.process_payout(payout, request.user)
+        return Response(TransporterPayoutSerializer(processed).data, status=status.HTTP_200_OK)
 
 
 class RatingListCreateView(generics.ListCreateAPIView):
-    """
-    Endpoint for submitting and listing marketplace ratings.
-    """
-    queryset = Rating.objects.all()
+    permission_classes = [permissions.IsAuthenticated]
     serializer_class = RatingSerializer
+    queryset = Rating.objects.all()
+
+    def perform_create(self, serializer):
+        serializer.save(rater=self.request.user)
+
+
+# ============================================================================
+# PHASE 9: OFFLINE-FIRST SYNCHRONIZATION VIEWS (SRS 2.4, 4.1, 5.2)
+# ============================================================================
+
+class OfflineSyncBatchView(APIView):
+    """
+    POST: Synchronize a batch of offline events queued by mobile driver clients.
+    Supports GPS_UPDATE, WAYPOINT_CHECKIN, and INCIDENT_REPORT event types with per-event
+    idempotency and atomic isolation.
+    """
     permission_classes = [permissions.IsAuthenticated]
 
-    @extend_schema(summary="List marketplace ratings")
-    def get(self, request, *args, **kwargs):
-        return super().get(request, *args, **kwargs)
-
-    @extend_schema(summary="Submit a post-trip rating")
-    def create(self, request, *args, **kwargs):
-        serializer = self.get_serializer(data=request.data)
+    @extend_schema(
+        request=OfflineSyncBatchInputSerializer,
+        responses={200: OfflineSyncBatchResponseSerializer}
+    )
+    def post(self, request):
+        serializer = OfflineSyncBatchInputSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        serializer.save(rater=request.user)
-        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+        events_data = serializer.validated_data['events']
+        device_id = serializer.validated_data.get('device_id', '')
+
+        batch_result = OfflineSyncService.process_batch(
+            user=request.user,
+            events_data=events_data,
+            device_id=device_id
+        )
+
+        return Response(
+            batch_result,
+            status=status.HTTP_200_OK
+        )
+
+
+class DriverIncidentReportListView(generics.ListAPIView):
+    """
+    GET: List driver incident reports logged for a corridor shipment.
+    """
+    permission_classes = [permissions.IsAuthenticated, IsShipmentParticipantOrAdmin]
+    serializer_class = DriverIncidentReportSerializer
+
+    def get_queryset(self):
+        shipment_id = self.kwargs['shipment_id']
+        shipment = get_object_or_404(Shipment, pk=shipment_id)
+        self.check_object_permissions(self.request, shipment)
+
+        return shipment.incident_reports.all()

@@ -101,13 +101,15 @@ class IsShipmentParticipantOrAdmin(BasePermission):
         if user.is_superuser or user.role == Role.ADMIN:
             return True
 
-        if hasattr(user, 'shipper_profile') and obj.load.shipper == user.shipper_profile:
+        shipment = getattr(obj, 'shipment', obj)
+
+        if hasattr(user, 'shipper_profile') and shipment.load.shipper == user.shipper_profile:
             return True
 
-        if hasattr(user, 'transporter_profile') and obj.transporter == user.transporter_profile:
+        if hasattr(user, 'transporter_profile') and shipment.transporter == user.transporter_profile:
             return True
 
-        if hasattr(user, 'driver_profile') and obj.driver == user.driver_profile:
+        if hasattr(user, 'driver_profile') and shipment.driver == user.driver_profile:
             return True
 
         return False
@@ -205,3 +207,28 @@ class IsDisputeResolvableByAdmin(BasePermission):
     def has_permission(self, request, view):
         user = request.user
         return bool(user and user.is_authenticated and (user.is_superuser or user.role == Role.ADMIN or user.is_staff))
+
+
+class IsAssignedDriverOrAdmin(BasePermission):
+    """
+    Permission class ensuring only assigned drivers, transporter owners, or Administrators
+    can synchronize offline events for a shipment.
+    """
+    def has_permission(self, request, view):
+        return bool(request.user and request.user.is_authenticated)
+
+    def has_object_permission(self, request, view, obj):
+        user = request.user
+        if not (user and user.is_authenticated):
+            return False
+
+        if user.is_superuser or user.role == Role.ADMIN:
+            return True
+
+        shipment = getattr(obj, 'shipment', obj)
+        if hasattr(user, 'driver_profile') and shipment.driver == user.driver_profile:
+            return True
+        if hasattr(user, 'transporter_profile') and shipment.transporter == user.transporter_profile:
+            return True
+
+        return False

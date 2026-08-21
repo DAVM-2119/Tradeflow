@@ -93,6 +93,12 @@ TradeFlow is a digital freight marketplace and logistics optimization platform c
 | `GET` | `/api/v1/payouts/{id}/` | Get payout details | Transporter Owner / Admin |
 | `POST` | `/api/v1/payouts/{id}/process/` | Process transporter payout transfer | **Admin Only** |
 
+### 7. Offline-First Synchronization & Incident Reporting (`/api/v1/`)
+| Method | Endpoint | Description | Auth / Role Required |
+| :--- | :--- | :--- | :--- |
+| `POST` | `/api/v1/sync/events/` | Batch sync offline events (`GPS_UPDATE`, `WAYPOINT_CHECKIN`, `INCIDENT_REPORT`) with idempotency protection | Assigned Driver / Transporter / Admin |
+| `GET` | `/api/v1/shipments/{id}/incidents/` | List driver incident reports logged for a shipment | Shipment Participant / Admin |
+
 ---
 
 ## Business & Security Rules

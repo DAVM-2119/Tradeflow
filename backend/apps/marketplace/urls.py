@@ -41,6 +41,8 @@ from apps.marketplace.views import (
     TransporterPayoutDetailView,
     TransporterPayoutProcessView,
     RatingListCreateView,
+    OfflineSyncBatchView,
+    DriverIncidentReportListView,
 )
 
 urlpatterns = [
@@ -93,6 +95,10 @@ urlpatterns = [
     path('payouts/', TransporterPayoutListView.as_view(), name='payout-list'),
     path('payouts/<int:pk>/', TransporterPayoutDetailView.as_view(), name='payout-detail'),
     path('payouts/<int:pk>/process/', TransporterPayoutProcessView.as_view(), name='payout-process'),
+
+    # Phase 9: Offline-First Synchronization & Incidents (SRS 2.4, 4.1, 5.2)
+    path('sync/events/', OfflineSyncBatchView.as_view(), name='sync-events'),
+    path('shipments/<int:shipment_id>/incidents/', DriverIncidentReportListView.as_view(), name='shipment-incidents'),
 
     # Ratings
     path('ratings/', RatingListCreateView.as_view(), name='rating-list-create'),
