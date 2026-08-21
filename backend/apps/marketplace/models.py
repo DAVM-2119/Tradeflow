@@ -232,6 +232,10 @@ class Shipment(models.Model):
     destination = models.CharField(max_length=255)
     actual_pickup_time = models.DateTimeField(null=True, blank=True)
     actual_delivery_time = models.DateTimeField(null=True, blank=True)
+    estimated_arrival_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    eta_updated_at = models.DateTimeField(null=True, blank=True)
+    eta_confidence = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
+    eta_basis = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -876,3 +880,140 @@ class DriverIncidentReport(models.Model):
 
     def __str__(self):
         return f"Incident Report ({self.incident_type}) for {self.shipment.tracking_number} by Driver {self.driver.user.get_full_name()}"
+
+
+# ============================================================================
+# PHASE 10: ROUTE OPTIMIZATION, ETA & FUEL ANALYTICS MODELS
+# ============================================================================
+
+class RouteStatus(models.TextChoices):
+    PLANNED = 'PLANNED', 'Planned'
+    ACTIVE = 'ACTIVE', 'Active'
+    COMPLETED = 'COMPLETED', 'Completed'
+    CANCELLED = 'CANCELLED', 'Cancelled'
+    RECALCULATING = 'RECALCULATING', 'Recalculating'
+    SUPERSEDED = 'SUPERSEDED', 'Superseded'
+
+
+class RouteDeviationStatus(models.TextChoices):
+    ON_ROUTE = 'ON_ROUTE', 'On Route'
+    DEVIATED = 'DEVIATED', 'Deviated'
+    UNKNOWN = 'UNKNOWN', 'Unknown'
+
+
+class Route(models.Model):
+    """
+    Intelligent shipment route representation storing origin/destination coordinates,
+    total distance, estimated travel time, and route status.
+    """
+    shipment = models.ForeignKey(
+        Shipment,
+        on_delete=models.CASCADE,
+        related_name='routes'
+    )
+    is_active = models.BooleanField(default=True, db_index=True)
+    origin = models.CharField(max_length=255)
+    origin_latitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    origin_longitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    destination = models.CharField(max_length=255)
+    destination_latitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    destination_longitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    total_distance_km = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
+    estimated_duration_hours = models.DecimalField(max_digits=6, decimal_places=2, default=Decimal('0.00'))
+    estimated_arrival_time = models.DateTimeField(null=True, blank=True)
+    status = models.CharField(
+        max_length=20,
+        choices=RouteStatus.choices,
+        default=RouteStatus.PLANNED,
+        db_index=True
+    )
+    average_speed_kmh = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('50.00'))
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Shipment Route'
+        verbose_name_plural = 'Shipment Routes'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"Route for {self.shipment.tracking_number}: {self.origin} -> {self.destination} ({self.total_distance_km} km)"
+
+
+class RouteWaypoint(models.Model):
+    """
+    Ordered waypoint representation for a planned or active shipment route.
+    """
+    route = models.ForeignKey(
+        Route,
+        on_delete=models.CASCADE,
+        related_name='waypoints'
+    )
+    sequence = models.PositiveIntegerField(db_index=True)
+    location_name = models.CharField(max_length=255)
+    latitude = models.DecimalField(max_digits=9, decimal_places=6)
+    longitude = models.DecimalField(max_digits=9, decimal_places=6)
+    expected_arrival_time = models.DateTimeField(null=True, blank=True)
+    expected_departure_time = models.DateTimeField(null=True, blank=True)
+    distance_from_previous_km = models.DecimalField(max_digits=8, decimal_places=2, default=Decimal('0.00'))
+    travel_time_from_previous_hours = models.DecimalField(max_digits=6, decimal_places=2, default=Decimal('0.00'))
+
+    class Meta:
+        verbose_name = 'Route Waypoint'
+        verbose_name_plural = 'Route Waypoints'
+        ordering = ['sequence']
+        unique_together = ('route', 'sequence')
+
+    def __str__(self):
+        return f"Waypoint #{self.sequence} ({self.location_name}) for Route #{self.route_id}"
+
+
+class RouteRecalculation(models.Model):
+    """
+    Audit record capturing route recalculation events triggered by incidents or deviations.
+    """
+    shipment = models.ForeignKey(
+        Shipment,
+        on_delete=models.CASCADE,
+        related_name='recalculations'
+    )
+    previous_route = models.ForeignKey(
+        Route,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='superseded_by'
+    )
+    new_route = models.ForeignKey(
+        Route,
+        on_delete=models.CASCADE,
+        related_name='recalculation_results'
+    )
+    triggered_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='route_recalculations_initiated'
+    )
+    incident = models.ForeignKey(
+        DriverIncidentReport,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='route_recalculations'
+    )
+    reason = models.TextField()
+    previous_distance_km = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
+    new_distance_km = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
+    previous_eta = models.DateTimeField(null=True, blank=True)
+    new_eta = models.DateTimeField(null=True, blank=True)
+    recalculated_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = 'Route Recalculation Audit'
+        verbose_name_plural = 'Route Recalculation Audits'
+        ordering = ['-recalculated_at']
+
+    def __str__(self):
+        return f"Recalculation for Shipment {self.shipment.tracking_number} at {self.recalculated_at}"

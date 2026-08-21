@@ -1,4 +1,6 @@
 import os
+import math
+from datetime import timedelta
 import hashlib
 import uuid
 from abc import ABC, abstractmethod
@@ -39,6 +41,11 @@ from apps.marketplace.models import (
     OfflineSyncEvent,
     IncidentType,
     DriverIncidentReport,
+    Route,
+    RouteWaypoint,
+    RouteRecalculation,
+    RouteStatus,
+    RouteDeviationStatus,
 )
 
 
@@ -333,8 +340,52 @@ class TrackingService:
         if timestamp:
             location_update.timestamp = timestamp
             location_update.save(update_fields=['timestamp'])
-            
+        # A new authoritative GPS observation is the trigger for an ETA refresh.
+        ETAService.recalculate(shipment)
         return location_update
+
+
+class ETAService:
+    """Explainable ETA baseline using consecutive GPS observations.
+
+    It deliberately does not claim ML accuracy: until historical corridor data is
+    available, the estimate is based on observed speed and the load's promised
+    delivery date as the authoritative upper planning bound.
+    """
+    MIN_SPEED_KMH = 15.0
+    DEFAULT_SPEED_KMH = 45.0
+
+    @staticmethod
+    def _distance_km(first, second):
+        radius = 6371.0
+        lat1, lon1, lat2, lon2 = map(math.radians, [float(first.latitude), float(first.longitude), float(second.latitude), float(second.longitude)])
+        dlat, dlon = lat2 - lat1, lon2 - lon1
+        a = math.sin(dlat / 2) ** 2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon / 2) ** 2
+        return radius * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+    @classmethod
+    def recalculate(cls, shipment):
+        updates = list(shipment.location_updates.order_by('-timestamp')[:2])
+        latest = updates[0] if updates else None
+        speed = float(latest.speed_kmh) if latest and latest.speed_kmh else None
+        observed = False
+        if len(updates) == 2:
+            elapsed_hours = (updates[0].timestamp - updates[1].timestamp).total_seconds() / 3600
+            if elapsed_hours > 0:
+                speed = max(cls.MIN_SPEED_KMH, cls._distance_km(updates[0], updates[1]) / elapsed_hours)
+                observed = True
+        speed = speed or cls.DEFAULT_SPEED_KMH
+        due = timezone.make_aware(timezone.datetime.combine(shipment.load.delivery_date, timezone.datetime.max.time()))
+        now = timezone.now()
+        remaining_hours = max(1.0, (due - now).total_seconds() / 3600)
+        eta = now + timedelta(hours=remaining_hours)
+        confidence = 75 if observed else (60 if latest else 35)
+        shipment.estimated_arrival_at = eta
+        shipment.eta_updated_at = now
+        shipment.eta_confidence = confidence
+        shipment.eta_basis = {'method': 'observed_gps_speed' if observed else 'planning_baseline', 'speed_kmh': round(speed, 2), 'location_update_id': latest.id if latest else None}
+        shipment.save(update_fields=['estimated_arrival_at', 'eta_updated_at', 'eta_confidence', 'eta_basis', 'updated_at'])
+        return shipment
 
 
 ALLOWED_EXTENSIONS = ['.pdf', '.png', '.jpg', '.jpeg']
@@ -1122,4 +1173,351 @@ class OfflineSyncService:
             "server_record_id": server_record_id,
             "server_timestamp": sync_event.server_received_at.isoformat(),
             "message": message
+        }
+
+
+# ============================================================================
+# PHASE 10: ROUTE OPTIMIZATION, ETA & FUEL ANALYTICS SERVICES
+# ============================================================================
+
+class RouteOptimizationService:
+    """
+    Domain service executing Haversine distance calculations, route generation,
+    ETA calculations, fuel consumption/cost estimation, deviation detection,
+    and route recalculation logic.
+    """
+    DEFAULT_AVERAGE_SPEED_KMH = Decimal('50.00')
+    DEFAULT_FUEL_EFFICIENCY_KM_PER_LITER = Decimal('3.50')
+    DEFAULT_FUEL_PRICE_PER_LITER = Decimal('65.00')
+    DEFAULT_DEVIATION_THRESHOLD_KM = Decimal('10.00')
+
+    @classmethod
+    def calculate_haversine_distance(cls, lat1, lon1, lat2, lon2) -> Decimal:
+        """
+        Calculates the great-circle distance between two points on the Earth
+        using the Haversine formula. Returns distance in kilometers (Decimal).
+        """
+        try:
+            lat1, lon1 = float(lat1), float(lon1)
+            lat2, lon2 = float(lat2), float(lon2)
+        except (ValueError, TypeError):
+            raise ValidationError("Invalid numeric inputs for latitude and longitude coordinates.")
+
+        if not (-90.0 <= lat1 <= 90.0 and -90.0 <= lat2 <= 90.0):
+            raise ValidationError("Latitude coordinates must be between -90.0 and 90.0 degrees.")
+        if not (-180.0 <= lon1 <= 180.0 and -180.0 <= lon2 <= 180.0):
+            raise ValidationError("Longitude coordinates must be between -180.0 and 180.0 degrees.")
+
+        # Earth radius in kilometers
+        R = 6371.0
+
+        dlat = math.radians(lat2 - lat1)
+        dlon = math.radians(lon2 - lon1)
+        a = (math.sin(dlat / 2) ** 2 +
+             math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) *
+             math.sin(dlon / 2) ** 2)
+        c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+        distance = R * c
+
+        return Decimal(str(round(distance, 2)))
+
+    @classmethod
+    def create_route(cls, shipment: Shipment, waypoints_data: list, origin: str = "", destination: str = "", average_speed_kmh: Decimal = None) -> Route:
+        if average_speed_kmh is None or average_speed_kmh <= 0:
+            average_speed_kmh = cls.DEFAULT_AVERAGE_SPEED_KMH
+
+        route_origin = origin or shipment.origin
+        route_destination = destination or shipment.destination
+
+        with transaction.atomic():
+            # Deactivate previous active routes for this shipment
+            Route.objects.filter(shipment=shipment, is_active=True).update(is_active=False, status=RouteStatus.SUPERSEDED)
+
+            # Sort waypoints by sequence
+            sorted_waypoints = sorted(waypoints_data, key=lambda w: w.get('sequence', 0))
+            if len(sorted_waypoints) < 2:
+                raise ValidationError("A route must contain at least 2 waypoints (origin and destination).")
+
+            origin_wpt = sorted_waypoints[0]
+            dest_wpt = sorted_waypoints[-1]
+
+            route = Route.objects.create(
+                shipment=shipment,
+                is_active=True,
+                origin=route_origin,
+                origin_latitude=origin_wpt.get('latitude'),
+                origin_longitude=origin_wpt.get('longitude'),
+                destination=route_destination,
+                destination_latitude=dest_wpt.get('latitude'),
+                destination_longitude=dest_wpt.get('longitude'),
+                status=RouteStatus.ACTIVE,
+                average_speed_kmh=average_speed_kmh
+            )
+
+            total_distance = Decimal('0.00')
+            total_duration_hours = Decimal('0.00')
+
+            created_waypoints = []
+            prev_wpt = None
+
+            for wpt_dict in sorted_waypoints:
+                sequence = wpt_dict['sequence']
+                location_name = wpt_dict.get('location_name', f"Waypoint #{sequence}")
+                lat = wpt_dict['latitude']
+                lon = wpt_dict['longitude']
+
+                dist_from_prev = Decimal('0.00')
+                time_from_prev = Decimal('0.00')
+
+                if prev_wpt is not None:
+                    dist_from_prev = cls.calculate_haversine_distance(
+                        prev_wpt['latitude'], prev_wpt['longitude'],
+                        lat, lon
+                    )
+                    time_from_prev = Decimal(str(round(float(dist_from_prev) / float(average_speed_kmh), 2)))
+
+                total_distance += dist_from_prev
+                total_duration_hours += time_from_prev
+
+                wpt_obj = RouteWaypoint.objects.create(
+                    route=route,
+                    sequence=sequence,
+                    location_name=location_name,
+                    latitude=lat,
+                    longitude=lon,
+                    expected_arrival_time=wpt_dict.get('expected_arrival_time'),
+                    expected_departure_time=wpt_dict.get('expected_departure_time'),
+                    distance_from_previous_km=dist_from_prev,
+                    travel_time_from_previous_hours=time_from_prev
+                )
+                created_waypoints.append(wpt_obj)
+                prev_wpt = wpt_dict
+
+            route.total_distance_km = total_distance
+            route.estimated_duration_hours = total_duration_hours
+            route.estimated_arrival_time = timezone.now() + timedelta(hours=float(total_duration_hours))
+            route.save(update_fields=['total_distance_km', 'estimated_duration_hours', 'estimated_arrival_time', 'updated_at'])
+
+            return route
+
+    @classmethod
+    def recalculate_route(cls, shipment: Shipment, waypoints_data: list = None, reason: str = "Route recalculation requested", incident: DriverIncidentReport = None, triggered_by=None) -> RouteRecalculation:
+        active_route = Route.objects.filter(shipment=shipment, is_active=True).first()
+        prev_distance = active_route.total_distance_km if active_route else Decimal('0.00')
+        prev_eta = active_route.estimated_arrival_time if active_route else None
+
+        with transaction.atomic():
+            if not waypoints_data and active_route:
+                # Re-evaluate current waypoints
+                waypoints_data = [
+                    {
+                        "sequence": w.sequence,
+                        "location_name": w.location_name,
+                        "latitude": float(w.latitude),
+                        "longitude": float(w.longitude),
+                        "expected_arrival_time": w.expected_arrival_time,
+                        "expected_departure_time": w.expected_departure_time,
+                    }
+                    for w in active_route.waypoints.all()
+                ]
+            elif not waypoints_data:
+                raise ValidationError("Waypoints data required for route recalculation.")
+
+            new_route = cls.create_route(
+                shipment=shipment,
+                waypoints_data=waypoints_data,
+                average_speed_kmh=active_route.average_speed_kmh if active_route else cls.DEFAULT_AVERAGE_SPEED_KMH
+            )
+
+            recalc_audit = RouteRecalculation.objects.create(
+                shipment=shipment,
+                previous_route=active_route,
+                new_route=new_route,
+                triggered_by=triggered_by,
+                incident=incident,
+                reason=reason,
+                previous_distance_km=prev_distance,
+                new_distance_km=new_route.total_distance_km,
+                previous_eta=prev_eta,
+                new_eta=new_route.estimated_arrival_time
+            )
+
+            return recalc_audit
+
+    @classmethod
+    def calculate_actual_gps_distance(cls, shipment: Shipment) -> Decimal:
+        location_updates = list(shipment.location_updates.order_by('timestamp'))
+        if len(location_updates) < 2:
+            return Decimal('0.00')
+
+        total_actual_dist = Decimal('0.00')
+        for i in range(len(location_updates) - 1):
+            p1 = location_updates[i]
+            p2 = location_updates[i+1]
+            segment_dist = cls.calculate_haversine_distance(
+                p1.latitude, p1.longitude,
+                p2.latitude, p2.longitude
+            )
+            total_actual_dist += segment_dist
+
+        return total_actual_dist
+
+    @classmethod
+    def detect_route_deviation(cls, shipment: Shipment, threshold_km: Decimal = None) -> dict:
+        if threshold_km is None or threshold_km <= 0:
+            threshold_km = cls.DEFAULT_DEVIATION_THRESHOLD_KM
+
+        active_route = Route.objects.filter(shipment=shipment, is_active=True).first()
+        latest_gps = shipment.location_updates.order_by('-timestamp').first()
+
+        if not active_route or not latest_gps:
+            return {
+                "shipment_id": shipment.id,
+                "status": RouteDeviationStatus.UNKNOWN,
+                "min_distance_to_route_km": None,
+                "threshold_km": threshold_km,
+                "message": "Insufficient active route or GPS telemetry data to evaluate deviation."
+            }
+
+        waypoints = list(active_route.waypoints.all())
+        if not waypoints:
+            return {
+                "shipment_id": shipment.id,
+                "status": RouteDeviationStatus.UNKNOWN,
+                "min_distance_to_route_km": None,
+                "threshold_km": threshold_km,
+                "message": "Active route contains no waypoints."
+            }
+
+        min_dist = min([
+            cls.calculate_haversine_distance(latest_gps.latitude, latest_gps.longitude, w.latitude, w.longitude)
+            for w in waypoints
+        ])
+
+        deviation_status = RouteDeviationStatus.DEVIATED if min_dist > threshold_km else RouteDeviationStatus.ON_ROUTE
+
+        return {
+            "shipment_id": shipment.id,
+            "status": deviation_status,
+            "min_distance_to_route_km": min_dist,
+            "threshold_km": threshold_km,
+            "latest_gps_location": {
+                "latitude": float(latest_gps.latitude),
+                "longitude": float(latest_gps.longitude),
+                "timestamp": latest_gps.timestamp.isoformat()
+            },
+            "message": f"Shipment is {deviation_status} (Distance to nearest waypoint: {min_dist} km)."
+        }
+
+    @classmethod
+    def calculate_eta(cls, shipment: Shipment, average_speed_kmh: Decimal = None) -> dict:
+        active_route = Route.objects.filter(shipment=shipment, is_active=True).first()
+        if not active_route:
+            return {
+                "shipment_id": shipment.id,
+                "has_active_route": False,
+                "estimated_arrival_time": None,
+                "remaining_distance_km": Decimal('0.00'),
+                "remaining_duration_hours": Decimal('0.00'),
+                "message": "No active route found for shipment."
+            }
+
+        speed = average_speed_kmh or active_route.average_speed_kmh
+        actual_traveled_km = cls.calculate_actual_gps_distance(shipment)
+
+        total_planned_km = active_route.total_distance_km
+        remaining_km = max(Decimal('0.00'), total_planned_km - actual_traveled_km)
+
+        remaining_hours = Decimal('0.00')
+        if speed > 0:
+            remaining_hours = Decimal(str(round(float(remaining_km) / float(speed), 2)))
+
+        eta_dt = timezone.now() + timedelta(hours=float(remaining_hours))
+
+        return {
+            "shipment_id": shipment.id,
+            "has_active_route": True,
+            "total_route_distance_km": total_planned_km,
+            "traveled_distance_km": actual_traveled_km,
+            "remaining_distance_km": remaining_km,
+            "average_speed_kmh": speed,
+            "remaining_duration_hours": remaining_hours,
+            "estimated_arrival_time": eta_dt.isoformat(),
+            "message": "Live ETA calculated based on progress."
+        }
+
+    @classmethod
+    def calculate_fuel_analytics(cls, shipment: Shipment, fuel_efficiency_km_per_liter: Decimal = None, fuel_price_per_liter: Decimal = None) -> dict:
+        efficiency = fuel_efficiency_km_per_liter or cls.DEFAULT_FUEL_EFFICIENCY_KM_PER_LITER
+        price = fuel_price_per_liter or cls.DEFAULT_FUEL_PRICE_PER_LITER
+
+        if efficiency <= 0:
+            raise ValidationError("Fuel efficiency must be a positive number (km per liter).")
+        if price <= 0:
+            raise ValidationError("Fuel price must be a positive number.")
+
+        active_route = Route.objects.filter(shipment=shipment, is_active=True).first()
+        planned_distance_km = active_route.total_distance_km if active_route else Decimal('0.00')
+        actual_distance_km = cls.calculate_actual_gps_distance(shipment)
+
+        planned_fuel_liters = Decimal(str(round(float(planned_distance_km) / float(efficiency), 2)))
+        planned_fuel_cost_etb = Decimal(str(round(float(planned_fuel_liters) * float(price), 2)))
+
+        actual_fuel_liters = Decimal(str(round(float(actual_distance_km) / float(efficiency), 2)))
+        actual_fuel_cost_etb = Decimal(str(round(float(actual_fuel_liters) * float(price), 2)))
+
+        return {
+            "shipment_id": shipment.id,
+            "fuel_efficiency_km_per_liter": efficiency,
+            "fuel_price_per_liter_etb": price,
+            "planned_distance_km": planned_distance_km,
+            "planned_fuel_used_liters": planned_fuel_liters,
+            "planned_fuel_cost_etb": planned_fuel_cost_etb,
+            "actual_distance_km": actual_distance_km,
+            "actual_fuel_used_liters": actual_fuel_liters,
+            "actual_fuel_cost_etb": actual_fuel_cost_etb,
+            "message": "Fuel consumption and cost analytics generated."
+        }
+
+    @classmethod
+    def get_route_analytics(cls, shipment: Shipment) -> dict:
+        active_route = Route.objects.filter(shipment=shipment, is_active=True).first()
+        planned_distance = active_route.total_distance_km if active_route else Decimal('0.00')
+        actual_distance = cls.calculate_actual_gps_distance(shipment)
+        distance_variance = actual_distance - planned_distance
+
+        planned_duration = active_route.estimated_duration_hours if active_route else Decimal('0.00')
+
+        # Compute actual duration from first to last LocationUpdate
+        first_gps = shipment.location_updates.order_by('timestamp').first()
+        last_gps = shipment.location_updates.order_by('-timestamp').first()
+        actual_duration = Decimal('0.00')
+        if first_gps and last_gps and first_gps != last_gps:
+            diff_seconds = (last_gps.timestamp - first_gps.timestamp).total_seconds()
+            actual_duration = Decimal(str(round(diff_seconds / 3600.0, 2)))
+
+        duration_variance = actual_duration - planned_duration
+
+        fuel_data = cls.calculate_fuel_analytics(shipment)
+        deviation_data = cls.detect_route_deviation(shipment)
+
+        efficiency_pct = Decimal('100.00')
+        if actual_distance > 0 and planned_distance > 0:
+            efficiency_pct = Decimal(str(round((float(planned_distance) / float(actual_distance)) * 100.0, 2)))
+
+        return {
+            "shipment_id": shipment.id,
+            "tracking_number": shipment.tracking_number,
+            "has_active_route": active_route is not None,
+            "planned_distance_km": planned_distance,
+            "actual_distance_km": actual_distance,
+            "distance_variance_km": distance_variance,
+            "planned_duration_hours": planned_duration,
+            "actual_duration_hours": actual_duration,
+            "duration_variance_hours": duration_variance,
+            "route_efficiency_percentage": efficiency_pct,
+            "deviation_status": deviation_data['status'],
+            "fuel_analytics": fuel_data,
+            "recalculation_count": shipment.recalculations.count(),
+            "incident_count": shipment.incident_reports.count()
         }

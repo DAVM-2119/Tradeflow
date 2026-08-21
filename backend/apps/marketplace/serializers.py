@@ -32,6 +32,9 @@ from apps.marketplace.models import (
     IncidentType,
     DriverIncidentReport,
     Rating,
+    Route,
+    RouteWaypoint,
+    RouteRecalculation,
 )
 
 
@@ -277,6 +280,10 @@ class ShipmentSerializer(serializers.ModelSerializer):
             'driver',
             'driver_name',
             'status',
+            'estimated_arrival_at',
+            'eta_updated_at',
+            'eta_confidence',
+            'eta_basis',
             'origin',
             'destination',
             'actual_pickup_time',
@@ -611,3 +618,162 @@ class RatingSerializer(serializers.ModelSerializer):
         if value < 1 or value > 5:
             raise serializers.ValidationError("Rating must be between 1 and 5 stars.")
         return value
+
+
+# ============================================================================
+# PHASE 10: ROUTE OPTIMIZATION, ETA & FUEL ANALYTICS SERIALIZERS
+# ============================================================================
+
+class RouteWaypointSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = RouteWaypoint
+        fields = (
+            'id',
+            'sequence',
+            'location_name',
+            'latitude',
+            'longitude',
+            'expected_arrival_time',
+            'expected_departure_time',
+            'distance_from_previous_km',
+            'travel_time_from_previous_hours',
+        )
+
+
+class RouteSerializer(serializers.ModelSerializer):
+    waypoints = RouteWaypointSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = Route
+        fields = (
+            'id',
+            'shipment',
+            'is_active',
+            'origin',
+            'origin_latitude',
+            'origin_longitude',
+            'destination',
+            'destination_latitude',
+            'destination_longitude',
+            'total_distance_km',
+            'estimated_duration_hours',
+            'estimated_arrival_time',
+            'status',
+            'average_speed_kmh',
+            'waypoints',
+            'created_at',
+            'updated_at',
+        )
+
+
+class RouteWaypointInputSerializer(serializers.Serializer):
+    sequence = serializers.IntegerField(min_value=1)
+    location_name = serializers.CharField(max_length=255)
+    latitude = serializers.DecimalField(max_digits=9, decimal_places=6)
+    longitude = serializers.DecimalField(max_digits=9, decimal_places=6)
+    expected_arrival_time = serializers.DateTimeField(required=False, allow_null=True)
+    expected_departure_time = serializers.DateTimeField(required=False, allow_null=True)
+
+    def validate_latitude(self, value):
+        if value < -90 or value > 90:
+            raise serializers.ValidationError("Latitude must be between -90.0 and 90.0 degrees.")
+        return value
+
+    def validate_longitude(self, value):
+        if value < -180 or value > 180:
+            raise serializers.ValidationError("Longitude must be between -180.0 and 180.0 degrees.")
+        return value
+
+
+class RouteCreateInputSerializer(serializers.Serializer):
+    origin = serializers.CharField(max_length=255, required=False, allow_blank=True)
+    destination = serializers.CharField(max_length=255, required=False, allow_blank=True)
+    average_speed_kmh = serializers.DecimalField(max_digits=5, decimal_places=2, required=False, default=50.00)
+    waypoints = RouteWaypointInputSerializer(many=True)
+
+    def validate_waypoints(self, value):
+        if len(value) < 2:
+            raise serializers.ValidationError("A route must contain at least 2 waypoints (origin and destination).")
+        return value
+
+
+class RouteRecalculateInputSerializer(serializers.Serializer):
+    reason = serializers.CharField(required=False, default="Route recalculation requested")
+    incident_id = serializers.IntegerField(required=False, allow_null=True)
+    waypoints = RouteWaypointInputSerializer(many=True, required=False)
+
+
+class RouteRecalculationSerializer(serializers.ModelSerializer):
+    previous_route_id = serializers.IntegerField(source='previous_route.id', read_only=True, allow_null=True)
+    new_route_id = serializers.IntegerField(source='new_route.id', read_only=True)
+    triggered_by_email = serializers.EmailField(source='triggered_by.email', read_only=True, allow_null=True)
+
+    class Meta:
+        model = RouteRecalculation
+        fields = (
+            'id',
+            'shipment',
+            'previous_route_id',
+            'new_route_id',
+            'triggered_by_email',
+            'incident',
+            'reason',
+            'previous_distance_km',
+            'new_distance_km',
+            'previous_eta',
+            'new_eta',
+            'recalculated_at',
+        )
+
+
+class LiveETAResponseSerializer(serializers.Serializer):
+    shipment_id = serializers.IntegerField()
+    has_active_route = serializers.BooleanField()
+    total_route_distance_km = serializers.DecimalField(max_digits=10, decimal_places=2)
+    traveled_distance_km = serializers.DecimalField(max_digits=10, decimal_places=2)
+    remaining_distance_km = serializers.DecimalField(max_digits=10, decimal_places=2)
+    average_speed_kmh = serializers.DecimalField(max_digits=5, decimal_places=2)
+    remaining_duration_hours = serializers.DecimalField(max_digits=6, decimal_places=2)
+    estimated_arrival_time = serializers.DateTimeField(allow_null=True)
+    message = serializers.CharField()
+
+
+class FuelAnalyticsResponseSerializer(serializers.Serializer):
+    shipment_id = serializers.IntegerField()
+    fuel_efficiency_km_per_liter = serializers.DecimalField(max_digits=5, decimal_places=2)
+    fuel_price_per_liter_etb = serializers.DecimalField(max_digits=8, decimal_places=2)
+    planned_distance_km = serializers.DecimalField(max_digits=10, decimal_places=2)
+    planned_fuel_used_liters = serializers.DecimalField(max_digits=10, decimal_places=2)
+    planned_fuel_cost_etb = serializers.DecimalField(max_digits=12, decimal_places=2)
+    actual_distance_km = serializers.DecimalField(max_digits=10, decimal_places=2)
+    actual_fuel_used_liters = serializers.DecimalField(max_digits=10, decimal_places=2)
+    actual_fuel_cost_etb = serializers.DecimalField(max_digits=12, decimal_places=2)
+    message = serializers.CharField()
+
+
+class RouteDeviationResponseSerializer(serializers.Serializer):
+    shipment_id = serializers.IntegerField()
+    status = serializers.CharField()
+    min_distance_to_route_km = serializers.DecimalField(max_digits=8, decimal_places=2, allow_null=True)
+    threshold_km = serializers.DecimalField(max_digits=8, decimal_places=2)
+    latest_gps_location = serializers.DictField(required=False, allow_null=True)
+    message = serializers.CharField()
+
+
+class RouteAnalyticsResponseSerializer(serializers.Serializer):
+    shipment_id = serializers.IntegerField()
+    tracking_number = serializers.CharField()
+    has_active_route = serializers.BooleanField()
+    planned_distance_km = serializers.DecimalField(max_digits=10, decimal_places=2)
+    actual_distance_km = serializers.DecimalField(max_digits=10, decimal_places=2)
+    distance_variance_km = serializers.DecimalField(max_digits=10, decimal_places=2)
+    planned_duration_hours = serializers.DecimalField(max_digits=6, decimal_places=2)
+    actual_duration_hours = serializers.DecimalField(max_digits=6, decimal_places=2)
+    duration_variance_hours = serializers.DecimalField(max_digits=6, decimal_places=2)
+    route_efficiency_percentage = serializers.DecimalField(max_digits=6, decimal_places=2)
+    deviation_status = serializers.CharField()
+    fuel_analytics = FuelAnalyticsResponseSerializer()
+    recalculation_count = serializers.IntegerField()
+    incident_count = serializers.IntegerField()
+
+

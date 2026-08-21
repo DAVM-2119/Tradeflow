@@ -35,6 +35,7 @@ from apps.marketplace.services import (
     LoadService,
     BiddingService,
     TrackingService,
+    ETAService,
     DocumentService,
     PODService,
     InvoiceService,
@@ -45,6 +46,7 @@ from apps.marketplace.services import (
     DisputeService,
     IncidentReportService,
     OfflineSyncService,
+    RouteOptimizationService,
 )
 from apps.marketplace.permissions import (
     IsTransporterVerified,
@@ -90,6 +92,15 @@ from apps.marketplace.serializers import (
     OfflineSyncBatchResponseSerializer,
     DriverIncidentReportSerializer,
     RatingSerializer,
+    RouteSerializer,
+    RouteWaypointSerializer,
+    RouteRecalculationSerializer,
+    RouteCreateInputSerializer,
+    RouteRecalculateInputSerializer,
+    LiveETAResponseSerializer,
+    FuelAnalyticsResponseSerializer,
+    RouteDeviationResponseSerializer,
+    RouteAnalyticsResponseSerializer,
 )
 
 
@@ -496,6 +507,16 @@ class ShipmentTrackingHistoryView(APIView):
         return Response(data, status=status.HTTP_200_OK)
 
 
+class ShipmentETAView(APIView):
+    permission_classes = [permissions.IsAuthenticated, IsShipmentParticipantOrAdmin]
+
+    @extend_schema(responses={200: ShipmentSerializer})
+    def get(self, request, pk):
+        shipment = get_object_or_404(Shipment, pk=pk)
+        self.check_object_permissions(request, shipment)
+        return Response(ShipmentSerializer(ETAService.recalculate(shipment)).data)
+
+
 # ============================================================================
 # PHASE 7: DOCUMENT MANAGEMENT & DIGITAL PROOF OF DELIVERY (e-POD) VIEWS
 # ============================================================================
@@ -862,3 +883,156 @@ class DriverIncidentReportListView(generics.ListAPIView):
         self.check_object_permissions(self.request, shipment)
 
         return shipment.incident_reports.all()
+
+
+# ============================================================================
+# PHASE 10: ROUTE OPTIMIZATION, ETA & FUEL ANALYTICS VIEWS
+# ============================================================================
+
+class ShipmentRouteCreateListAPIView(APIView):
+    """
+    GET: Retrieve active route and waypoints for a corridor shipment.
+    POST: Plan a new route for a shipment with ordered waypoints.
+    """
+    permission_classes = [permissions.IsAuthenticated, IsShipmentParticipantOrAdmin]
+
+    @extend_schema(responses={200: RouteSerializer})
+    def get(self, request, shipment_id):
+        shipment = get_object_or_404(Shipment, pk=shipment_id)
+        self.check_object_permissions(request, shipment)
+
+        active_route = shipment.routes.filter(is_active=True).first()
+        if not active_route:
+            raise NotFound(f"No active route planned for shipment #{shipment_id}.")
+
+        serializer = RouteSerializer(active_route)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    @extend_schema(request=RouteCreateInputSerializer, responses={201: RouteSerializer})
+    def post(self, request, shipment_id):
+        shipment = get_object_or_404(Shipment, pk=shipment_id)
+        self.check_object_permissions(request, shipment)
+
+        serializer = RouteCreateInputSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        route = RouteOptimizationService.create_route(
+            shipment=shipment,
+            waypoints_data=serializer.validated_data['waypoints'],
+            origin=serializer.validated_data.get('origin', ''),
+            destination=serializer.validated_data.get('destination', ''),
+            average_speed_kmh=serializer.validated_data.get('average_speed_kmh')
+        )
+
+        return Response(RouteSerializer(route).data, status=status.HTTP_201_CREATED)
+
+
+class ShipmentRouteRecalculateAPIView(APIView):
+    """
+    POST: Recalculate route for a shipment while preserving historical route audit records.
+    """
+    permission_classes = [permissions.IsAuthenticated, IsShipmentParticipantOrAdmin]
+
+    @extend_schema(request=RouteRecalculateInputSerializer, responses={200: RouteRecalculationSerializer})
+    def post(self, request, shipment_id):
+        shipment = get_object_or_404(Shipment, pk=shipment_id)
+        self.check_object_permissions(request, shipment)
+
+        serializer = RouteRecalculateInputSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        incident = None
+        incident_id = serializer.validated_data.get('incident_id')
+        if incident_id:
+            incident = get_object_or_404(DriverIncidentReport, pk=incident_id)
+
+        recalc = RouteOptimizationService.recalculate_route(
+            shipment=shipment,
+            waypoints_data=serializer.validated_data.get('waypoints'),
+            reason=serializer.validated_data.get('reason', 'Route recalculation requested'),
+            incident=incident,
+            triggered_by=request.user
+        )
+
+        return Response(RouteRecalculationSerializer(recalc).data, status=status.HTTP_200_OK)
+
+
+class ShipmentRouteAnalyticsAPIView(APIView):
+    """
+    GET: Comprehensive route efficiency analytics comparing planned vs actual metrics.
+    """
+    permission_classes = [permissions.IsAuthenticated, IsShipmentParticipantOrAdmin]
+
+    @extend_schema(responses={200: RouteAnalyticsResponseSerializer})
+    def get(self, request, shipment_id):
+        shipment = get_object_or_404(Shipment, pk=shipment_id)
+        self.check_object_permissions(request, shipment)
+
+        analytics_data = RouteOptimizationService.get_route_analytics(shipment)
+        return Response(analytics_data, status=status.HTTP_200_OK)
+
+
+class ShipmentETAAPIView(APIView):
+    """
+    GET: Live ETA calculation based on real-time GPS progress and active route.
+    """
+    permission_classes = [permissions.IsAuthenticated, IsShipmentParticipantOrAdmin]
+
+    @extend_schema(responses={200: LiveETAResponseSerializer})
+    def get(self, request, shipment_id):
+        shipment = get_object_or_404(Shipment, pk=shipment_id)
+        self.check_object_permissions(request, shipment)
+
+        speed_param = request.query_params.get('average_speed_kmh')
+        average_speed = float(speed_param) if speed_param else None
+
+        eta_data = RouteOptimizationService.calculate_eta(shipment, average_speed_kmh=average_speed)
+        return Response(eta_data, status=status.HTTP_200_OK)
+
+
+class ShipmentFuelAnalyticsAPIView(APIView):
+    """
+    GET: Fuel consumption and cost analytics for planned vs actual distance.
+    """
+    permission_classes = [permissions.IsAuthenticated, IsShipmentParticipantOrAdmin]
+
+    @extend_schema(responses={200: FuelAnalyticsResponseSerializer})
+    def get(self, request, shipment_id):
+        shipment = get_object_or_404(Shipment, pk=shipment_id)
+        self.check_object_permissions(request, shipment)
+
+        efficiency_param = request.query_params.get('fuel_efficiency')
+        price_param = request.query_params.get('fuel_price')
+
+        efficiency = float(efficiency_param) if efficiency_param else None
+        price = float(price_param) if price_param else None
+
+        fuel_data = RouteOptimizationService.calculate_fuel_analytics(
+            shipment=shipment,
+            fuel_efficiency_km_per_liter=efficiency,
+            fuel_price_per_liter=price
+        )
+        return Response(fuel_data, status=status.HTTP_200_OK)
+
+
+class ShipmentRouteDeviationAPIView(APIView):
+    """
+    GET: Check if latest GPS telemetry ping deviates from planned route waypoints.
+    """
+    permission_classes = [permissions.IsAuthenticated, IsShipmentParticipantOrAdmin]
+
+    @extend_schema(responses={200: RouteDeviationResponseSerializer})
+    def get(self, request, shipment_id):
+        shipment = get_object_or_404(Shipment, pk=shipment_id)
+        self.check_object_permissions(request, shipment)
+
+        threshold_param = request.query_params.get('threshold_km')
+        threshold = float(threshold_param) if threshold_param else None
+
+        deviation_data = RouteOptimizationService.detect_route_deviation(
+            shipment=shipment,
+            threshold_km=threshold
+        )
+        return Response(deviation_data, status=status.HTTP_200_OK)
+
+

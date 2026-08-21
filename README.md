@@ -99,6 +99,16 @@ TradeFlow is a digital freight marketplace and logistics optimization platform c
 | `POST` | `/api/v1/sync/events/` | Batch sync offline events (`GPS_UPDATE`, `WAYPOINT_CHECKIN`, `INCIDENT_REPORT`) with idempotency protection | Assigned Driver / Transporter / Admin |
 | `GET` | `/api/v1/shipments/{id}/incidents/` | List driver incident reports logged for a shipment | Shipment Participant / Admin |
 
+### 8. Route Optimization, ETA & Fuel Analytics (`/api/v1/`)
+| Method | Endpoint | Description | Auth / Role Required |
+| :--- | :--- | :--- | :--- |
+| `POST/GET` | `/api/v1/shipments/{id}/route/` | Plan new route or retrieve active route with ordered waypoints | Shipment Participant / Admin |
+| `POST` | `/api/v1/shipments/{id}/route/recalculate/` | Recalculate route while preserving historical audit records | Shipment Participant / Admin |
+| `GET` | `/api/v1/shipments/{id}/route/analytics/` | View comprehensive route efficiency analytics | Shipment Participant / Admin |
+| `GET` | `/api/v1/shipments/{id}/eta/` | Calculate live ETA based on real-time GPS progress | Shipment Participant / Admin |
+| `GET` | `/api/v1/shipments/{id}/fuel/` | Get fuel consumption and cost analytics (ETB) | Shipment Participant / Admin |
+| `GET` | `/api/v1/shipments/{id}/deviation/` | Check route deviation status (`ON_ROUTE`, `DEVIATED`) | Shipment Participant / Admin |
+
 ---
 
 ## Business & Security Rules
@@ -111,6 +121,8 @@ TradeFlow is a digital freight marketplace and logistics optimization platform c
 - **Digital Proof of Delivery (e-POD)**: Submitting an e-POD creates a `ProofOfDelivery` record in `SUBMITTED` state, automatically sets shipment status to `DELIVERED`, and logs a delivery `ShipmentMilestone`. Shippers can confirm (`CONFIRMED`) or dispute (`DISPUTED`) the delivery.
 - **Freight Settlement & Commission Calculation**: `SettlementService` computes platform commission (`gross_freight - platform_commission = transporter_net_payable`) using `Decimal` precision. Configurable commission rate (default 5%) stored on each settlement.
 - **Payment Provider Abstraction & Idempotency**: Payment provider logic isolated via `PaymentProvider` interface and `MockPaymentProvider` implementation. `POST /api/v1/payments/initiate/` enforces unique `idempotency_key` preventing duplicate transactions.
+- **Offline-First Synchronization & Incident Reporting**: Synchronizes client-queued events in isolated savepoints. Enforces atomic idempotency via PostgreSQL unique constraints on `client_event_id`. Captures driver incident reports (`ACCIDENT`, `CHECKPOINT_DELAY`, `ROAD_PROBLEM`, `SECURITY_INCIDENT`, etc.) linked to shipments.
+- **Route Optimization, Haversine Distance & Fuel Analytics**: Computes great-circle distance via Haversine formula in km. Sums ordered waypoint distances, calculates travel duration based on configurable average speed (default 50 km/h), calculates fuel consumption (km/L) and fuel costs (ETB). Recalculates routes without destroying historical audit history, detecting route deviations (`ON_ROUTE` vs `DEVIATED`).
 
 ---
 
@@ -141,7 +153,7 @@ pipenv install --dev
 pipenv run python manage.py migrate
 ```
 
-### 5. Verify System Checks & Run Full Test Suite (74/74 Passed)
+### 5. Verify System Checks & Run Full Test Suite (97/97 Passed 100%)
 ```bash
 pipenv run python manage.py check
 pipenv run pytest

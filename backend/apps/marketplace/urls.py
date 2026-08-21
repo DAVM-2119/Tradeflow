@@ -19,6 +19,7 @@ from apps.marketplace.views import (
     ShipmentStatusUpdateView,
     ShipmentLocationView,
     ShipmentTrackingHistoryView,
+    ShipmentETAView,
     ShipmentDocumentListUploadView,
     DocumentDetailView,
     DocumentDownloadView,
@@ -43,6 +44,12 @@ from apps.marketplace.views import (
     RatingListCreateView,
     OfflineSyncBatchView,
     DriverIncidentReportListView,
+    ShipmentRouteCreateListAPIView,
+    ShipmentRouteRecalculateAPIView,
+    ShipmentRouteAnalyticsAPIView,
+    ShipmentETAAPIView,
+    ShipmentFuelAnalyticsAPIView,
+    ShipmentRouteDeviationAPIView,
 )
 
 urlpatterns = [
@@ -99,6 +106,14 @@ urlpatterns = [
     # Phase 9: Offline-First Synchronization & Incidents (SRS 2.4, 4.1, 5.2)
     path('sync/events/', OfflineSyncBatchView.as_view(), name='sync-events'),
     path('shipments/<int:shipment_id>/incidents/', DriverIncidentReportListView.as_view(), name='shipment-incidents'),
+
+    # Phase 10: Route Optimization, ETA & Fuel Analytics
+    path('shipments/<int:shipment_id>/route/', ShipmentRouteCreateListAPIView.as_view(), name='shipment-route'),
+    path('shipments/<int:shipment_id>/route/recalculate/', ShipmentRouteRecalculateAPIView.as_view(), name='shipment-route-recalculate'),
+    path('shipments/<int:shipment_id>/route/analytics/', ShipmentRouteAnalyticsAPIView.as_view(), name='shipment-route-analytics'),
+    path('shipments/<int:shipment_id>/eta/', ShipmentETAAPIView.as_view(), name='shipment-eta'),
+    path('shipments/<int:shipment_id>/fuel/', ShipmentFuelAnalyticsAPIView.as_view(), name='shipment-fuel'),
+    path('shipments/<int:shipment_id>/deviation/', ShipmentRouteDeviationAPIView.as_view(), name='shipment-deviation'),
 
     # Ratings
     path('ratings/', RatingListCreateView.as_view(), name='rating-list-create'),

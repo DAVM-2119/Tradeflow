@@ -16,6 +16,9 @@ from apps.marketplace.models import (
     OfflineSyncEvent,
     DriverIncidentReport,
     Rating,
+    Route,
+    RouteWaypoint,
+    RouteRecalculation,
 )
 
 
@@ -45,7 +48,7 @@ class BidAdmin(admin.ModelAdmin):
 
 @admin.register(Shipment)
 class ShipmentAdmin(admin.ModelAdmin):
-    list_display = ('tracking_number', 'load', 'transporter', 'vehicle', 'driver', 'status', 'created_at')
+    list_display = ('tracking_number', 'load', 'transporter', 'vehicle', 'driver', 'status', 'estimated_arrival_at', 'eta_confidence', 'created_at')
     list_filter = ('status', 'origin', 'destination')
     search_fields = ('tracking_number', 'transporter__company_name', 'driver__user__email', 'origin', 'destination')
     readonly_fields = ('created_at', 'updated_at')
@@ -145,3 +148,27 @@ class RatingAdmin(admin.ModelAdmin):
     list_filter = ('stars',)
     search_fields = ('rater__email', 'ratee__email', 'comment')
     readonly_fields = ('created_at', 'updated_at')
+
+
+@admin.register(Route)
+class RouteAdmin(admin.ModelAdmin):
+    list_display = ('id', 'shipment', 'origin', 'destination', 'total_distance_km', 'estimated_duration_hours', 'status', 'is_active', 'created_at')
+    list_filter = ('status', 'is_active', 'created_at')
+    search_fields = ('shipment__tracking_number', 'origin', 'destination')
+    readonly_fields = ('created_at', 'updated_at')
+
+
+@admin.register(RouteWaypoint)
+class RouteWaypointAdmin(admin.ModelAdmin):
+    list_display = ('id', 'route', 'sequence', 'location_name', 'latitude', 'longitude', 'distance_from_previous_km', 'travel_time_from_previous_hours')
+    list_filter = ('sequence',)
+    search_fields = ('route__shipment__tracking_number', 'location_name')
+
+
+@admin.register(RouteRecalculation)
+class RouteRecalculationAdmin(admin.ModelAdmin):
+    list_display = ('id', 'shipment', 'previous_route', 'new_route', 'triggered_by', 'incident', 'previous_distance_km', 'new_distance_km', 'recalculated_at')
+    list_filter = ('recalculated_at',)
+    search_fields = ('shipment__tracking_number', 'reason', 'triggered_by__email')
+    readonly_fields = ('recalculated_at',)
+
