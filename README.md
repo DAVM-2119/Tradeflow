@@ -109,6 +109,17 @@ TradeFlow is a digital freight marketplace and logistics optimization platform c
 | `GET` | `/api/v1/shipments/{id}/fuel/` | Get fuel consumption and cost analytics (ETB) | Shipment Participant / Admin |
 | `GET` | `/api/v1/shipments/{id}/deviation/` | Check route deviation status (`ON_ROUTE`, `DEVIATED`) | Shipment Participant / Admin |
 
+### 9. AI Predictive Logistics & Risk Intelligence (`/api/v1/`)
+| Method | Endpoint | Description | Auth / Role Required |
+| :--- | :--- | :--- | :--- |
+| `GET` | `/api/v1/shipments/{id}/predictions/` | Consolidated predictive logistics & operational risk summary dashboard | Shipment Participant / Admin |
+| `GET` | `/api/v1/shipments/{id}/predictions/eta/` | Predict ETA delay minutes, delay probability, risk score, and confidence | Shipment Participant / Admin |
+| `GET` | `/api/v1/shipments/{id}/predictions/risk/` | Shipment delay-risk scoring with explainable contributing factors | Shipment Participant / Admin |
+| `GET` | `/api/v1/shipments/{id}/predictions/route-risk/` | Route risk score and major corridor risk factors | Shipment Participant / Admin |
+| `GET` | `/api/v1/shipments/{id}/predictions/fuel/` | Predict fuel consumption (L) and fuel cost (ETB) | Shipment Participant / Admin |
+| `GET` | `/api/v1/shipments/{id}/predictions/incident-risk/` | Incident risk prediction based on driver history and route deviation | Shipment Participant / Admin |
+| `GET` | `/api/v1/shipments/{id}/predictions/history/` | View paginated historical prediction audit trail | Shipment Participant / Admin |
+
 ---
 
 ## Business & Security Rules
@@ -123,6 +134,7 @@ TradeFlow is a digital freight marketplace and logistics optimization platform c
 - **Payment Provider Abstraction & Idempotency**: Payment provider logic isolated via `PaymentProvider` interface and `MockPaymentProvider` implementation. `POST /api/v1/payments/initiate/` enforces unique `idempotency_key` preventing duplicate transactions.
 - **Offline-First Synchronization & Incident Reporting**: Synchronizes client-queued events in isolated savepoints. Enforces atomic idempotency via PostgreSQL unique constraints on `client_event_id`. Captures driver incident reports (`ACCIDENT`, `CHECKPOINT_DELAY`, `ROAD_PROBLEM`, `SECURITY_INCIDENT`, etc.) linked to shipments.
 - **Route Optimization, Haversine Distance & Fuel Analytics**: Computes great-circle distance via Haversine formula in km. Sums ordered waypoint distances, calculates travel duration based on configurable average speed (default 50 km/h), calculates fuel consumption (km/L) and fuel costs (ETB). Recalculates routes without destroying historical audit history, detecting route deviations (`ON_ROUTE` vs `DEVIATED`).
+- **AI Predictive Logistics & Advisory Intelligence**: Predicts ETA delays, shipment risk, route risk, fuel costs, incident probabilities, and transparent weighted operational risk (ETA 30%, Incident 25%, Route 20%, Fuel 15%, Deviation 10%). All predictions are strictly advisory and NEVER mutate business state. Handles insufficient data safely (`prediction_available: false`).
 
 ---
 
@@ -153,7 +165,7 @@ pipenv install --dev
 pipenv run python manage.py migrate
 ```
 
-### 5. Verify System Checks & Run Full Test Suite (97/97 Passed 100%)
+### 5. Verify System Checks & Run Full Test Suite (118/118 Passed 100%)
 ```bash
 pipenv run python manage.py check
 pipenv run pytest

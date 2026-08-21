@@ -102,6 +102,23 @@ from apps.marketplace.serializers import (
     RouteDeviationResponseSerializer,
     RouteAnalyticsResponseSerializer,
 )
+from apps.marketplace.predictive_services import (
+    ETADelayPredictionService,
+    ShipmentRiskPredictionService,
+    RouteRiskPredictionService,
+    FuelPredictionService,
+    IncidentRiskPredictionService,
+    OperationalRiskService,
+)
+from apps.marketplace.predictive_serializers import (
+    ETAPredictionResponseSerializer,
+    ShipmentRiskResponseSerializer,
+    RouteRiskResponseSerializer,
+    FuelPredictionResponseSerializer,
+    IncidentRiskResponseSerializer,
+    OperationalRiskResponseSerializer,
+    PredictionHistorySerializer,
+)
 
 
 # ============================================================================
@@ -1034,5 +1051,126 @@ class ShipmentRouteDeviationAPIView(APIView):
             threshold_km=threshold
         )
         return Response(deviation_data, status=status.HTTP_200_OK)
+
+
+# ============================================================================
+# PHASE 11: AI PREDICTIVE LOGISTICS & RISK INTELLIGENCE VIEWS
+# ============================================================================
+
+class ShipmentPredictiveDashboardAPIView(APIView):
+    """
+    GET: Consolidated predictive logistics & operational risk summary dashboard.
+    """
+    permission_classes = [permissions.IsAuthenticated, IsShipmentParticipantOrAdmin]
+
+    @extend_schema(responses={200: OperationalRiskResponseSerializer})
+    def get(self, request, shipment_id):
+        shipment = get_object_or_404(Shipment, pk=shipment_id)
+        self.check_object_permissions(request, shipment)
+
+        dashboard_data = OperationalRiskService.get_composite_dashboard(shipment)
+        return Response(dashboard_data, status=status.HTTP_200_OK)
+
+
+class ShipmentETAPredictionAPIView(APIView):
+    """
+    GET: Predicted ETA delay, delay probability, risk score, and confidence.
+    """
+    permission_classes = [permissions.IsAuthenticated, IsShipmentParticipantOrAdmin]
+
+    @extend_schema(responses={200: ETAPredictionResponseSerializer})
+    def get(self, request, shipment_id):
+        shipment = get_object_or_404(Shipment, pk=shipment_id)
+        self.check_object_permissions(request, shipment)
+
+        eta_prediction = ETADelayPredictionService.predict_eta_delay(shipment)
+        return Response(eta_prediction, status=status.HTTP_200_OK)
+
+
+class ShipmentRiskPredictionAPIView(APIView):
+    """
+    GET: Overall shipment delay-risk scoring with explainable contributing factors.
+    """
+    permission_classes = [permissions.IsAuthenticated, IsShipmentParticipantOrAdmin]
+
+    @extend_schema(responses={200: ShipmentRiskResponseSerializer})
+    def get(self, request, shipment_id):
+        shipment = get_object_or_404(Shipment, pk=shipment_id)
+        self.check_object_permissions(request, shipment)
+
+        risk_prediction = ShipmentRiskPredictionService.predict_shipment_risk(shipment)
+        return Response(risk_prediction, status=status.HTTP_200_OK)
+
+
+class ShipmentRouteRiskPredictionAPIView(APIView):
+    """
+    GET: Route risk score and major corridor risk factors.
+    """
+    permission_classes = [permissions.IsAuthenticated, IsShipmentParticipantOrAdmin]
+
+    @extend_schema(responses={200: RouteRiskResponseSerializer})
+    def get(self, request, shipment_id):
+        shipment = get_object_or_404(Shipment, pk=shipment_id)
+        self.check_object_permissions(request, shipment)
+
+        route_risk = RouteRiskPredictionService.predict_route_risk(shipment)
+        return Response(route_risk, status=status.HTTP_200_OK)
+
+
+class ShipmentFuelPredictionAPIView(APIView):
+    """
+    GET: Fuel consumption and cost predictions.
+    """
+    permission_classes = [permissions.IsAuthenticated, IsShipmentParticipantOrAdmin]
+
+    @extend_schema(responses={200: FuelPredictionResponseSerializer})
+    def get(self, request, shipment_id):
+        shipment = get_object_or_404(Shipment, pk=shipment_id)
+        self.check_object_permissions(request, shipment)
+
+        eff = request.query_params.get('fuel_efficiency')
+        price = request.query_params.get('fuel_price')
+
+        efficiency = float(eff) if eff else None
+        fuel_price = float(price) if price else None
+
+        fuel_pred = FuelPredictionService.predict_fuel_consumption(
+            shipment=shipment,
+            fuel_efficiency=efficiency,
+            fuel_price=fuel_price
+        )
+        return Response(fuel_pred, status=status.HTTP_200_OK)
+
+
+class ShipmentIncidentRiskPredictionAPIView(APIView):
+    """
+    GET: Incident risk prediction based on driver history and route deviation.
+    """
+    permission_classes = [permissions.IsAuthenticated, IsShipmentParticipantOrAdmin]
+
+    @extend_schema(responses={200: IncidentRiskResponseSerializer})
+    def get(self, request, shipment_id):
+        shipment = get_object_or_404(Shipment, pk=shipment_id)
+        self.check_object_permissions(request, shipment)
+
+        incident_risk = IncidentRiskPredictionService.predict_incident_risk(shipment)
+        return Response(incident_risk, status=status.HTTP_200_OK)
+
+
+class ShipmentPredictionHistoryAPIView(APIView):
+    """
+    GET: Paginated historical prediction records for auditability.
+    """
+    permission_classes = [permissions.IsAuthenticated, IsShipmentParticipantOrAdmin]
+
+    @extend_schema(responses={200: PredictionHistorySerializer(many=True)})
+    def get(self, request, shipment_id):
+        shipment = get_object_or_404(Shipment, pk=shipment_id)
+        self.check_object_permissions(request, shipment)
+
+        qs = shipment.predictions.select_related('prediction_model').order_by('-created_at')
+        serializer = PredictionHistorySerializer(qs, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
 
 

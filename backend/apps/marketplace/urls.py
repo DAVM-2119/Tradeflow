@@ -50,6 +50,13 @@ from apps.marketplace.views import (
     ShipmentETAAPIView,
     ShipmentFuelAnalyticsAPIView,
     ShipmentRouteDeviationAPIView,
+    ShipmentPredictiveDashboardAPIView,
+    ShipmentETAPredictionAPIView,
+    ShipmentRiskPredictionAPIView,
+    ShipmentRouteRiskPredictionAPIView,
+    ShipmentFuelPredictionAPIView,
+    ShipmentIncidentRiskPredictionAPIView,
+    ShipmentPredictionHistoryAPIView,
 )
 
 urlpatterns = [
@@ -114,6 +121,15 @@ urlpatterns = [
     path('shipments/<int:shipment_id>/eta/', ShipmentETAAPIView.as_view(), name='shipment-eta'),
     path('shipments/<int:shipment_id>/fuel/', ShipmentFuelAnalyticsAPIView.as_view(), name='shipment-fuel'),
     path('shipments/<int:shipment_id>/deviation/', ShipmentRouteDeviationAPIView.as_view(), name='shipment-deviation'),
+
+    # Phase 11: AI Predictive Logistics & Risk Intelligence
+    path('shipments/<int:shipment_id>/predictions/', ShipmentPredictiveDashboardAPIView.as_view(), name='shipment-predictive-dashboard'),
+    path('shipments/<int:shipment_id>/predictions/eta/', ShipmentETAPredictionAPIView.as_view(), name='shipment-prediction-eta'),
+    path('shipments/<int:shipment_id>/predictions/risk/', ShipmentRiskPredictionAPIView.as_view(), name='shipment-prediction-risk'),
+    path('shipments/<int:shipment_id>/predictions/route-risk/', ShipmentRouteRiskPredictionAPIView.as_view(), name='shipment-prediction-route-risk'),
+    path('shipments/<int:shipment_id>/predictions/fuel/', ShipmentFuelPredictionAPIView.as_view(), name='shipment-prediction-fuel'),
+    path('shipments/<int:shipment_id>/predictions/incident-risk/', ShipmentIncidentRiskPredictionAPIView.as_view(), name='shipment-prediction-incident-risk'),
+    path('shipments/<int:shipment_id>/predictions/history/', ShipmentPredictionHistoryAPIView.as_view(), name='shipment-prediction-history'),
 
     # Ratings
     path('ratings/', RatingListCreateView.as_view(), name='rating-list-create'),

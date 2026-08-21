@@ -1017,3 +1017,115 @@ class RouteRecalculation(models.Model):
 
     def __str__(self):
         return f"Recalculation for Shipment {self.shipment.tracking_number} at {self.recalculated_at}"
+
+
+# ============================================================================
+# PHASE 11: AI PREDICTIVE LOGISTICS & RISK INTELLIGENCE MODELS
+# ============================================================================
+
+class PredictionType(models.TextChoices):
+    ETA_DELAY = 'ETA_DELAY', 'ETA Delay Prediction'
+    SHIPMENT_RISK = 'SHIPMENT_RISK', 'Shipment Delay Risk'
+    ROUTE_RISK = 'ROUTE_RISK', 'Route Risk'
+    FUEL_CONSUMPTION = 'FUEL_CONSUMPTION', 'Fuel Consumption Prediction'
+    INCIDENT_RISK = 'INCIDENT_RISK', 'Incident Risk'
+    OPERATIONAL_RISK = 'OPERATIONAL_RISK', 'Aggregate Operational Risk'
+
+
+class RiskLevel(models.TextChoices):
+    LOW = 'LOW', 'Low Risk'
+    MEDIUM = 'MEDIUM', 'Medium Risk'
+    HIGH = 'HIGH', 'High Risk'
+    CRITICAL = 'CRITICAL', 'Critical Risk'
+
+    @classmethod
+    def from_score(cls, score: int) -> 'RiskLevel':
+        """
+        Derives deterministic RiskLevel from numeric risk score (0 to 100).
+        0–24: LOW
+        25–49: MEDIUM
+        50–74: HIGH
+        75–100: CRITICAL
+        """
+        score = max(0, min(100, int(score)))
+        if score <= 24:
+            return cls.LOW
+        elif score <= 49:
+            return cls.MEDIUM
+        elif score <= 74:
+            return cls.HIGH
+        else:
+            return cls.CRITICAL
+
+
+class PredictiveModel(models.Model):
+    """
+    Registry tracking predictive models and algorithms used to generate risk predictions.
+    """
+    name = models.CharField(max_length=100)
+    model_type = models.CharField(max_length=50, choices=PredictionType.choices)
+    version = models.CharField(max_length=50, default='1.0')
+    algorithm = models.CharField(max_length=100, default='Deterministic Weighted Heuristic')
+    description = models.TextField(blank=True)
+    is_active = models.BooleanField(default=True)
+    trained_at = models.DateTimeField(default=timezone.now)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Predictive Model'
+        verbose_name_plural = 'Predictive Models'
+        ordering = ['-created_at']
+        unique_together = ('name', 'version')
+
+    def __str__(self):
+        return f"{self.name} v{self.version} ({self.get_model_type_display()})"
+
+
+class PredictionRecord(models.Model):
+    """
+    Auditable persistent record of a generated logistics prediction.
+    """
+    shipment = models.ForeignKey(
+        Shipment,
+        on_delete=models.CASCADE,
+        related_name='predictions'
+    )
+    route = models.ForeignKey(
+        Route,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='predictions'
+    )
+    prediction_model = models.ForeignKey(
+        PredictiveModel,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='predictions'
+    )
+    prediction_type = models.CharField(max_length=50, choices=PredictionType.choices)
+    prediction_value = models.JSONField(default=dict)
+    risk_score = models.IntegerField(default=0)
+    risk_level = models.CharField(max_length=20, choices=RiskLevel.choices, default=RiskLevel.LOW)
+    confidence_score = models.DecimalField(max_digits=4, decimal_places=2, default=Decimal('0.80'))
+    prediction_horizon_hours = models.DecimalField(max_digits=6, decimal_places=2, default=Decimal('24.00'))
+    input_features = models.JSONField(default=dict)
+    explanation = models.JSONField(default=list)
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        verbose_name = 'Prediction Record'
+        verbose_name_plural = 'Prediction Records'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['shipment', 'prediction_type', '-created_at']),
+            models.Index(fields=['risk_level']),
+            models.Index(fields=['created_at']),
+        ]
+
+    def __str__(self):
+        return f"{self.get_prediction_type_display()} for {self.shipment.tracking_number}: {self.risk_level} ({self.risk_score})"
+

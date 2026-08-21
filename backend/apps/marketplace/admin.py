@@ -19,6 +19,8 @@ from apps.marketplace.models import (
     Route,
     RouteWaypoint,
     RouteRecalculation,
+    PredictiveModel,
+    PredictionRecord,
 )
 
 
@@ -171,4 +173,21 @@ class RouteRecalculationAdmin(admin.ModelAdmin):
     list_filter = ('recalculated_at',)
     search_fields = ('shipment__tracking_number', 'reason', 'triggered_by__email')
     readonly_fields = ('recalculated_at',)
+
+
+@admin.register(PredictiveModel)
+class PredictiveModelAdmin(admin.ModelAdmin):
+    list_display = ('name', 'version', 'model_type', 'algorithm', 'is_active', 'trained_at', 'created_at')
+    list_filter = ('model_type', 'is_active', 'created_at')
+    search_fields = ('name', 'version', 'algorithm', 'description')
+    readonly_fields = ('created_at', 'updated_at')
+
+
+@admin.register(PredictionRecord)
+class PredictionRecordAdmin(admin.ModelAdmin):
+    list_display = ('id', 'prediction_type', 'shipment', 'risk_level', 'risk_score', 'confidence_score', 'prediction_model', 'created_at')
+    list_filter = ('prediction_type', 'risk_level', 'created_at')
+    search_fields = ('shipment__tracking_number', 'prediction_model__name')
+    readonly_fields = ('shipment', 'route', 'prediction_model', 'prediction_type', 'prediction_value', 'risk_score', 'risk_level', 'confidence_score', 'prediction_horizon_hours', 'input_features', 'explanation', 'created_at')
+
 
