@@ -4,7 +4,7 @@ import uuid
 from abc import ABC, abstractmethod
 from decimal import Decimal
 from datetime import date, datetime, timedelta
-from django.db import transaction
+from django.db import transaction, IntegrityError
 from django.utils import timezone
 from django.core.files.storage import default_storage
 from rest_framework.exceptions import PermissionDenied, ValidationError, NotFound
@@ -944,6 +944,26 @@ class OfflineSyncService:
             res = cls._process_single_event_logic(user, event_dict, device_id)
             transaction.savepoint_commit(sid)
             return res
+        except IntegrityError:
+            transaction.savepoint_rollback(sid)
+            existing_event = OfflineSyncEvent.objects.filter(client_event_id=client_event_id).first()
+            if existing_event:
+                return {
+                    "client_event_id": client_event_id,
+                    "status": OfflineSyncStatus.DUPLICATE,
+                    "event_type": existing_event.event_type,
+                    "server_record_id": existing_event.server_record_id,
+                    "server_timestamp": existing_event.server_received_at.isoformat(),
+                    "message": "Event already synchronized (Idempotent request)."
+                }
+            return {
+                "client_event_id": client_event_id,
+                "status": OfflineSyncStatus.DUPLICATE,
+                "event_type": event_dict.get('event_type', 'UNKNOWN'),
+                "server_record_id": None,
+                "server_timestamp": timezone.now().isoformat(),
+                "message": "Event already synchronized (Idempotent request)."
+            }
         except Exception as e:
             transaction.savepoint_rollback(sid)
             err_msg = str(e)
@@ -961,17 +981,20 @@ class OfflineSyncService:
                     except Exception:
                         pass
                 
-                OfflineSyncEvent.objects.create(
-                    client_event_id=client_event_id,
-                    user=user,
-                    device_id=device_id or event_dict.get('device_id', ''),
-                    event_type=event_dict.get('event_type', OfflineSyncEventType.GPS_UPDATE),
-                    shipment=shipment,
-                    payload=event_dict.get('payload', {}),
-                    client_created_at=client_dt,
-                    status=OfflineSyncStatus.FAILED,
-                    error_message=err_msg
-                )
+                try:
+                    OfflineSyncEvent.objects.create(
+                        client_event_id=client_event_id,
+                        user=user,
+                        device_id=device_id or event_dict.get('device_id', ''),
+                        event_type=event_dict.get('event_type', OfflineSyncEventType.GPS_UPDATE),
+                        shipment=shipment,
+                        payload=event_dict.get('payload', {}),
+                        client_created_at=client_dt,
+                        status=OfflineSyncStatus.FAILED,
+                        error_message=err_msg
+                    )
+                except IntegrityError:
+                    pass
 
             return {
                 "client_event_id": client_event_id,
@@ -1016,6 +1039,19 @@ class OfflineSyncService:
                 client_dt = datetime.fromisoformat(client_created_str.replace('Z', '+00:00'))
             except Exception:
                 pass
+
+        # Atomically claim client_event_id at database level before domain operations
+        sync_event = OfflineSyncEvent.objects.create(
+            client_event_id=client_event_id,
+            user=user,
+            device_id=device_id or event_dict.get('device_id', ''),
+            event_type=event_type,
+            shipment=shipment,
+            payload=payload,
+            client_created_at=client_dt,
+            status=OfflineSyncStatus.SYNCED,
+            processed_at=timezone.now()
+        )
 
         server_record_id = None
         message = ""
@@ -1067,50 +1103,17 @@ class OfflineSyncService:
                 "reported_at": client_dt
             }
 
-            # Pre-create sync event record for FK linking
-            sync_event = OfflineSyncEvent.objects.create(
-                client_event_id=client_event_id,
-                user=user,
-                device_id=device_id or event_dict.get('device_id', ''),
-                event_type=event_type,
-                shipment=shipment,
-                payload=payload,
-                client_created_at=client_dt,
-                status=OfflineSyncStatus.SYNCED,
-                processed_at=timezone.now()
-            )
-
             report = IncidentReportService.create_incident_report(
                 shipment=shipment,
                 driver_user=user,
                 incident_data=report_data,
                 offline_event=sync_event
             )
-            sync_event.server_record_id = report.id
-            sync_event.save(update_fields=['server_record_id'])
+            server_record_id = report.id
+            message = "Driver incident report synchronized successfully."
 
-            return {
-                "client_event_id": client_event_id,
-                "status": OfflineSyncStatus.SYNCED,
-                "event_type": event_type,
-                "server_record_id": report.id,
-                "server_timestamp": sync_event.server_received_at.isoformat(),
-                "message": "Driver incident report synchronized successfully."
-            }
-
-        # Create Sync Event record for GPS or WAYPOINT
-        sync_event = OfflineSyncEvent.objects.create(
-            client_event_id=client_event_id,
-            user=user,
-            device_id=device_id or event_dict.get('device_id', ''),
-            event_type=event_type,
-            shipment=shipment,
-            payload=payload,
-            client_created_at=client_dt,
-            status=OfflineSyncStatus.SYNCED,
-            server_record_id=server_record_id,
-            processed_at=timezone.now()
-        )
+        sync_event.server_record_id = server_record_id
+        sync_event.save(update_fields=['server_record_id'])
 
         return {
             "client_event_id": client_event_id,
