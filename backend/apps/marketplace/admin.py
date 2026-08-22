@@ -27,7 +27,33 @@ from apps.marketplace.models import (
     AutomationRule,
     AutomationRecommendation,
     AutomationExecution,
+    OperationalEvent,
+    Notification,
+    NotificationPreference,
 )
+
+
+@admin.register(OperationalEvent)
+class OperationalEventAdmin(admin.ModelAdmin):
+    list_display = ('id', 'event_type', 'severity', 'shipment', 'source', 'title', 'created_at')
+    list_filter = ('event_type', 'severity', 'source', 'created_at')
+    search_fields = ('title', 'description', 'idempotency_key', 'shipment__tracking_number')
+    readonly_fields = ('event_type', 'severity', 'shipment', 'actor', 'source', 'title', 'description', 'payload', 'idempotency_key', 'created_at')
+
+
+@admin.register(Notification)
+class NotificationAdmin(admin.ModelAdmin):
+    list_display = ('id', 'recipient', 'notification_type', 'priority', 'title', 'is_read', 'is_acknowledged', 'created_at')
+    list_filter = ('notification_type', 'priority', 'is_read', 'is_acknowledged', 'created_at')
+    search_fields = ('recipient__email', 'title', 'message', 'shipment__tracking_number')
+    readonly_fields = ('created_at',)
+
+
+@admin.register(NotificationPreference)
+class NotificationPreferenceAdmin(admin.ModelAdmin):
+    list_display = ('user', 'route_alerts_enabled', 'eta_alerts_enabled', 'risk_alerts_enabled', 'incident_alerts_enabled', 'critical_alerts_enabled', 'updated_at')
+    search_fields = ('user__email',)
+    readonly_fields = ('updated_at',)
 
 
 @admin.register(AutomationRule)
@@ -56,6 +82,7 @@ class AutomationExecutionAdmin(admin.ModelAdmin):
     list_filter = ('status', 'action_type', 'executed_at')
     search_fields = ('recommendation__shipment__tracking_number', 'action_type')
     readonly_fields = ('recommendation', 'executed_by', 'action_type', 'status', 'result', 'executed_at')
+
 
 
 

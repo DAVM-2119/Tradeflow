@@ -120,13 +120,17 @@ TradeFlow is a digital freight marketplace and logistics optimization platform c
 | `GET` | `/api/v1/shipments/{id}/predictions/incident-risk/` | Incident risk prediction based on driver history and route deviation | Shipment Participant / Admin |
 | `GET` | `/api/v1/shipments/{id}/predictions/history/` | View paginated historical prediction audit trail | Shipment Participant / Admin |
 
-### 10. Dynamic Pricing & Freight Market Intelligence (`/api/v1/`)
+### 11. Automated Workflow & Smart Operations (`/api/v1/`)
 | Method | Endpoint | Description | Auth / Role Required |
 | :--- | :--- | :--- | :--- |
-| `GET` | `/api/v1/shipments/{id}/pricing/` | Calculate and persist decision-support freight price recommendations (minimum, recommended, maximum) | Shipment Participant / Admin |
-| `GET` | `/api/v1/shipments/{id}/pricing/history/` | View paginated historical price recommendation audit records | Shipment Participant / Admin |
-| `GET` | `/api/v1/shipments/{id}/pricing/market/` | View corridor market intelligence and demand/supply statistics | Shipment Participant / Admin |
-| `GET` | `/api/v1/pricing/strategies/` | List active pricing strategies and rate parameters | Admin Only |
+| `POST` | `/api/v1/shipments/{id}/automation/evaluate/` | Evaluate operational rules against Phase 9-12 data and generate workflow recommendations | Shipment Participant / Admin |
+| `GET` | `/api/v1/shipments/{id}/automation/` | List pending and active workflow recommendations for a shipment | Shipment Participant / Admin |
+| `GET` | `/api/v1/shipments/{id}/automation/history/` | View paginated recommendation history and audit trail for a shipment | Shipment Participant / Admin |
+| `GET` | `/api/v1/automation/recommendations/{id}/` | Retrieve recommendation detail by ID | Shipment Participant / Admin |
+| `POST` | `/api/v1/automation/recommendations/{id}/approve/` | Approve a pending recommendation | Shipment Participant / Admin |
+| `POST` | `/api/v1/automation/recommendations/{id}/reject/` | Reject a pending recommendation with optional rejection reason | Shipment Participant / Admin |
+| `POST` | `/api/v1/automation/recommendations/{id}/execute/` | Execute an approved recommendation safely and log execution record | Shipment Participant / Admin |
+| `GET` | `/api/v1/automation/rules/` | List active automation rules and priority configurations | Admin Only |
 
 ---
 
@@ -144,6 +148,8 @@ TradeFlow is a digital freight marketplace and logistics optimization platform c
 - **Route Optimization, Haversine Distance & Fuel Analytics**: Computes great-circle distance via Haversine formula in km. Sums ordered waypoint distances, calculates travel duration based on configurable average speed (default 50 km/h), calculates fuel consumption (km/L) and fuel costs (ETB). Recalculates routes without destroying historical audit history, detecting route deviations (`ON_ROUTE` vs `DEVIATED`).
 - **AI Predictive Logistics & Advisory Intelligence**: Predicts ETA delays, shipment risk, route risk, fuel costs, incident probabilities, and transparent weighted operational risk (ETA 30%, Incident 25%, Route 20%, Fuel 15%, Deviation 10%). All predictions are strictly advisory and NEVER mutate business state. Handles insufficient data safely (`prediction_available: false`).
 - **Dynamic Freight Pricing Engine & Decision Support**: Calculates recommended, minimum, and maximum freight prices in ETB based on route distance, fuel analytics, operational risk, deviation premiums, and demand/supply market pressure (`LOW`, `NORMAL`, `HIGH`). All pricing outputs are strictly decision-support recommendations and NEVER automatically mutate existing shipment, bid, invoice, or settlement values.
+- **Automated Workflow & Human-in-the-Loop Smart Operations**: Evaluates active operational rules across Phase 9-12 data sources and generates structured workflow recommendations (`REVIEW_SHIPMENT`, `CONTACT_DRIVER`, `RECALCULATE_ROUTE`, `REVIEW_INCIDENT`, `REVIEW_PRICING`, `ESCALATE_TO_ADMIN`). Strictly enforces human-in-the-loop authorization (`PENDING` -> `APPROVED` / `REJECTED` -> `EXECUTED`). Duplicate pending recommendations are prevented per rule/shipment. Evaluation NEVER mutates business state without explicit user approval.
+- **Real-Time Operations, Notifications & Event Intelligence**: Persists immutable, deduplicated operational events across all operational triggers, resolves authorized recipients, applies granular delivery preferences with critical severity overrides, and pushes real-time WebSocket payloads via Django Channels & Redis (`/ws/notifications/`, `/ws/shipments/{shipment_id}/events/`). All WebSocket streams require JWT token authentication. Real-time notifications and events NEVER mutate core business state.
 
 ---
 
@@ -174,11 +180,12 @@ pipenv install --dev
 pipenv run python manage.py migrate
 ```
 
-### 5. Verify System Checks & Run Full Test Suite (133/133 Passed 100%)
+### 5. Verify System Checks & Run Full Test Suite (176/176 Passed 100%)
 ```bash
 pipenv run python manage.py check
 pipenv run pytest
 ```
+
 
 ### 6. Start the Backend Development Server
 ```bash
@@ -189,3 +196,4 @@ pipenv run python manage.py runserver 8000
 Once the server is running, visit:
 - **Swagger UI**: `http://127.0.0.1:8000/api/docs/`
 - **OpenAPI Schema**: `http://127.0.0.1:8000/api/schema/`
+

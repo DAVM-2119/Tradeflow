@@ -925,7 +925,28 @@ class IncidentReportService:
             timestamp=reported_at
         )
 
+        try:
+            from apps.marketplace.realtime_services import OperationalEventService
+            from apps.marketplace.models import OperationalEventType, EventSeverity
+            OperationalEventService.create_event(
+                event_type=OperationalEventType.INCIDENT_REPORTED,
+                severity=EventSeverity.HIGH,
+                shipment=shipment,
+                actor=driver_user,
+                source='DRIVER_APP' if offline_event else 'LIVE_API',
+                title=f"Driver Incident: {report.get_incident_type_display()}",
+                description=report.description,
+                payload={
+                    "incident_id": report.id,
+                    "incident_type": report.incident_type,
+                    "location_name": report.location_name,
+                }
+            )
+        except Exception as e:
+            logger.warning(f"Failed to emit OperationalEvent for incident #{report.id}: {str(e)}")
+
         return report
+
 
 
 class OfflineSyncService:

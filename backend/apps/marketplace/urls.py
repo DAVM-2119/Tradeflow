@@ -69,6 +69,15 @@ from apps.marketplace.views import (
     AutomationRecommendationRejectAPIView,
     AutomationRecommendationExecuteAPIView,
     AutomationRuleListAPIView,
+    NotificationListAPIView,
+    NotificationUnreadCountAPIView,
+    NotificationDetailAPIView,
+    NotificationReadAPIView,
+    NotificationReadAllAPIView,
+    NotificationAcknowledgeAPIView,
+    ShipmentEventListAPIView,
+    EventDetailAPIView,
+    NotificationPreferenceAPIView,
 )
 
 urlpatterns = [
@@ -105,18 +114,18 @@ urlpatterns = [
     path('pod/<int:pk>/confirm/', PODConfirmView.as_view(), name='pod-confirm'),
     path('pod/<int:pk>/dispute/', PODDisputeView.as_view(), name='pod-dispute'),
 
-    # Phase 8: Payments & Freight Settlement (FR-10)
-    path('payments/', PaymentListView.as_view(), name='payment-list'),
+    # Payments & Freight Settlement Engine
     path('payments/initiate/', PaymentInitiateView.as_view(), name='payment-initiate'),
+    path('payments/', PaymentListView.as_view(), name='payment-list'),
     path('payments/<int:pk>/', PaymentDetailView.as_view(), name='payment-detail'),
     path('payments/<int:pk>/verify/', PaymentVerifyView.as_view(), name='payment-verify'),
     path('payments/<int:pk>/reconcile/', PaymentReconcileView.as_view(), name='payment-reconcile'),
-    path('shipments/<int:pk>/payments/', ShipmentPaymentsView.as_view(), name='shipment-payments'),
+    path('shipments/<int:shipment_id>/payments/', ShipmentPaymentsView.as_view(), name='shipment-payments'),
     path('invoices/', FreightInvoiceListView.as_view(), name='invoice-list'),
     path('invoices/<int:pk>/', FreightInvoiceDetailView.as_view(), name='invoice-detail'),
     path('settlements/', FreightSettlementListView.as_view(), name='settlement-list'),
-    path('settlements/create/', FreightSettlementCreateView.as_view(), name='settlement-create'),
     path('settlements/<int:pk>/', FreightSettlementDetailView.as_view(), name='settlement-detail'),
+    path('settlements/create/', FreightSettlementCreateView.as_view(), name='settlement-create'),
     path('settlements/<int:pk>/dispute/', FreightSettlementDisputeView.as_view(), name='settlement-dispute'),
     path('payouts/', TransporterPayoutListView.as_view(), name='payout-list'),
     path('payouts/<int:pk>/', TransporterPayoutDetailView.as_view(), name='payout-detail'),
@@ -159,8 +168,17 @@ urlpatterns = [
     path('automation/recommendations/<int:pk>/execute/', AutomationRecommendationExecuteAPIView.as_view(), name='automation-recommendation-execute'),
     path('automation/rules/', AutomationRuleListAPIView.as_view(), name='automation-rule-list'),
 
+    # Phase 14: Real-Time Operations, Notifications & Event Intelligence
+    path('notifications/', NotificationListAPIView.as_view(), name='notification-list'),
+    path('notifications/unread-count/', NotificationUnreadCountAPIView.as_view(), name='notification-unread-count'),
+    path('notifications/<int:pk>/', NotificationDetailAPIView.as_view(), name='notification-detail'),
+    path('notifications/<int:pk>/read/', NotificationReadAPIView.as_view(), name='notification-read'),
+    path('notifications/read-all/', NotificationReadAllAPIView.as_view(), name='notification-read-all'),
+    path('notifications/<int:pk>/acknowledge/', NotificationAcknowledgeAPIView.as_view(), name='notification-acknowledge'),
+    path('shipments/<int:shipment_id>/events/', ShipmentEventListAPIView.as_view(), name='shipment-event-list'),
+    path('events/<int:pk>/', EventDetailAPIView.as_view(), name='event-detail'),
+    path('notification-preferences/', NotificationPreferenceAPIView.as_view(), name='notification-preferences'),
+
     # Ratings
     path('ratings/', RatingListCreateView.as_view(), name='rating-list-create'),
 ]
-
-

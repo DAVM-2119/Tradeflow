@@ -123,6 +123,9 @@ from apps.marketplace.models import (
     AutomationRule,
     AutomationRecommendation,
     AutomationExecution,
+    OperationalEvent,
+    Notification,
+    NotificationPreference,
 )
 from apps.marketplace.automation_services import AutomationService
 from apps.marketplace.automation_serializers import (
@@ -133,6 +136,14 @@ from apps.marketplace.automation_serializers import (
     AutomationReviewInputSerializer,
     AutomationExecutionSerializer,
 )
+from apps.marketplace.realtime_services import OperationalEventService, NotificationService
+from apps.marketplace.realtime_serializers import (
+    OperationalEventSerializer,
+    NotificationSerializer,
+    NotificationPreferenceSerializer,
+    UnreadCountSerializer,
+)
+
 
 
 
@@ -1391,6 +1402,125 @@ class AutomationRuleListAPIView(generics.ListCreateAPIView):
     permission_classes = [permissions.IsAuthenticated, permissions.IsAdminUser]
     serializer_class = AutomationRuleSerializer
     queryset = AutomationRule.objects.all().order_by('name')
+
+
+# ============================================================================
+# PHASE 14: REAL-TIME OPERATIONS, NOTIFICATIONS & EVENT INTELLIGENCE VIEWS
+# ============================================================================
+
+class NotificationListAPIView(generics.ListAPIView):
+    """
+    GET: List notifications for the authenticated user (paginated, -created_at).
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = NotificationSerializer
+
+    def get_queryset(self):
+        return Notification.objects.filter(recipient=self.request.user).select_related('event', 'shipment').order_by('-created_at')
+
+
+class NotificationUnreadCountAPIView(APIView):
+    """
+    GET: Return unread and critical unread notification counts for authenticated user.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    @extend_schema(request=None, responses={200: UnreadCountSerializer})
+    def get(self, request):
+        data = NotificationService.get_unread_count(request.user)
+        serializer = UnreadCountSerializer(data)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class NotificationDetailAPIView(generics.RetrieveAPIView):
+    """
+    GET: Retrieve details of a specific notification.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = NotificationSerializer
+
+    def get_queryset(self):
+        if self.request.user.role == Role.ADMIN:
+            return Notification.objects.all().select_related('event', 'shipment')
+        return Notification.objects.filter(recipient=self.request.user).select_related('event', 'shipment')
+
+
+class NotificationReadAPIView(APIView):
+    """
+    POST: Mark a single notification as read.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    @extend_schema(request=None, responses={200: NotificationSerializer})
+    def post(self, request, pk):
+        notification = NotificationService.mark_as_read(pk, request.user)
+        serializer = NotificationSerializer(notification)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class NotificationReadAllAPIView(APIView):
+    """
+    POST: Mark all unread notifications for authenticated user as read.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    @extend_schema(request=None, responses={200: OpenApiResponse(description="Count of notifications marked read")})
+    def post(self, request):
+        count = NotificationService.mark_all_as_read(request.user)
+        return Response({"marked_read_count": count}, status=status.HTTP_200_OK)
+
+
+class NotificationAcknowledgeAPIView(APIView):
+    """
+    POST: Acknowledge a critical notification.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    @extend_schema(request=None, responses={200: NotificationSerializer})
+    def post(self, request, pk):
+        notification = NotificationService.acknowledge_notification(pk, request.user)
+        serializer = NotificationSerializer(notification)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class ShipmentEventListAPIView(generics.ListAPIView):
+    """
+    GET: List operational events logged for a specific shipment (paginated).
+    """
+    permission_classes = [permissions.IsAuthenticated, IsShipmentParticipantOrAdmin]
+    serializer_class = OperationalEventSerializer
+
+    def get_queryset(self):
+        shipment_id = self.kwargs.get('shipment_id')
+        shipment = get_object_or_404(Shipment, pk=shipment_id)
+        self.check_object_permissions(self.request, shipment)
+        return OperationalEventService.get_shipment_events(shipment, self.request.user)
+
+
+class EventDetailAPIView(APIView):
+    """
+    GET: Retrieve details of a specific operational event.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    @extend_schema(request=None, responses={200: OperationalEventSerializer})
+    def get(self, request, pk):
+        event = OperationalEventService.get_event(pk, request.user)
+        serializer = OperationalEventSerializer(event)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class NotificationPreferenceAPIView(generics.RetrieveUpdateAPIView):
+    """
+    GET/PATCH: Retrieve or update authenticated user notification preferences.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = NotificationPreferenceSerializer
+
+    def get_object(self):
+        pref, _ = NotificationPreference.objects.get_or_create(user=self.request.user)
+        return pref
+
 
 
 

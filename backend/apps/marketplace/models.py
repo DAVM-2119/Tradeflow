@@ -1394,4 +1394,145 @@ class AutomationExecution(models.Model):
         return f"Execution {self.action_type} on Rec #{self.recommendation_id} by {self.executed_by}"
 
 
+# ============================================================================
+# PHASE 14: REAL-TIME OPERATIONS, NOTIFICATIONS & EVENT INTELLIGENCE
+# ============================================================================
+
+class OperationalEventType(models.TextChoices):
+    ROUTE_DEVIATION = 'ROUTE_DEVIATION', 'Route Deviation Detected'
+    ETA_DELAY = 'ETA_DELAY', 'ETA Arrival Delay Predicted'
+    HIGH_OPERATIONAL_RISK = 'HIGH_OPERATIONAL_RISK', 'High Operational Risk Level'
+    INCIDENT_REPORTED = 'INCIDENT_REPORTED', 'Driver Incident Reported'
+    FUEL_RISK = 'FUEL_RISK', 'High Fuel Consumption Risk'
+    HIGH_MARKET_PRESSURE = 'HIGH_MARKET_PRESSURE', 'High Corridor Market Pressure'
+    STALE_GPS = 'STALE_GPS', 'Stale GPS Telemetry Ping'
+    AUTOMATION_RECOMMENDATION = 'AUTOMATION_RECOMMENDATION', 'Workflow Recommendation Created'
+    AUTOMATION_APPROVAL_REQUIRED = 'AUTOMATION_APPROVAL_REQUIRED', 'Workflow Recommendation Requires Approval'
+    AUTOMATION_EXECUTED = 'AUTOMATION_EXECUTED', 'Workflow Recommendation Executed'
+    SHIPMENT_STATUS_CHANGED = 'SHIPMENT_STATUS_CHANGED', 'Shipment Status Transition'
+    PAYMENT_EVENT = 'PAYMENT_EVENT', 'Freight Settlement / Payment Event'
+    SYSTEM_ALERT = 'SYSTEM_ALERT', 'System Operational Alert'
+
+
+class EventSeverity(models.TextChoices):
+    LOW = 'LOW', 'Low Severity'
+    MEDIUM = 'MEDIUM', 'Medium Severity'
+    HIGH = 'HIGH', 'High Severity'
+    CRITICAL = 'CRITICAL', 'Critical Severity'
+
+
+class NotificationType(models.TextChoices):
+    OPERATIONAL_ALERT = 'OPERATIONAL_ALERT', 'Operational Alert'
+    SHIPMENT_UPDATE = 'SHIPMENT_UPDATE', 'Shipment Update'
+    ROUTE_ALERT = 'ROUTE_ALERT', 'Route Corridor Alert'
+    ETA_ALERT = 'ETA_ALERT', 'ETA Delay Alert'
+    RISK_ALERT = 'RISK_ALERT', 'Risk Level Alert'
+    INCIDENT_ALERT = 'INCIDENT_ALERT', 'Driver Incident Alert'
+    FUEL_ALERT = 'FUEL_ALERT', 'Fuel Consumption Alert'
+    MARKET_ALERT = 'MARKET_ALERT', 'Corridor Market Alert'
+    AUTOMATION_ALERT = 'AUTOMATION_ALERT', 'Workflow Automation Alert'
+    SYSTEM_ALERT = 'SYSTEM_ALERT', 'System Operational Alert'
+
+
+class OperationalEvent(models.Model):
+    """
+    Immutable operational event record capturing critical platform activities.
+    """
+    event_type = models.CharField(max_length=50, choices=OperationalEventType.choices, db_index=True)
+    severity = models.CharField(max_length=20, choices=EventSeverity.choices, default=EventSeverity.MEDIUM, db_index=True)
+    shipment = models.ForeignKey(Shipment, on_delete=models.CASCADE, null=True, blank=True, related_name='operational_events')
+    actor = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='acted_operational_events')
+
+    source = models.CharField(max_length=100, default='SYSTEM')
+    title = models.CharField(max_length=255)
+    description = models.TextField()
+    payload = models.JSONField(default=dict, blank=True)
+    idempotency_key = models.CharField(max_length=255, unique=True, db_index=True)
+
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        verbose_name = 'Operational Event'
+        verbose_name_plural = 'Operational Events'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['shipment', '-created_at']),
+            models.Index(fields=['event_type', 'severity']),
+            models.Index(fields=['created_at']),
+            models.Index(fields=['idempotency_key']),
+        ]
+
+    def __str__(self):
+        return f"[{self.severity}] {self.event_type}: {self.title}"
+
+
+class Notification(models.Model):
+    """
+    Persistent notification entity generated for authorized recipients.
+    """
+    recipient = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='notifications')
+    event = models.ForeignKey(OperationalEvent, on_delete=models.SET_NULL, null=True, blank=True, related_name='notifications')
+    shipment = models.ForeignKey(Shipment, on_delete=models.CASCADE, null=True, blank=True, related_name='notifications')
+
+    notification_type = models.CharField(max_length=50, choices=NotificationType.choices, db_index=True)
+    priority = models.CharField(max_length=20, choices=EventSeverity.choices, default=EventSeverity.MEDIUM, db_index=True)
+
+    title = models.CharField(max_length=255)
+    message = models.TextField()
+    data = models.JSONField(default=dict, blank=True)
+
+    is_read = models.BooleanField(default=False, db_index=True)
+    read_at = models.DateTimeField(null=True, blank=True)
+
+    is_acknowledged = models.BooleanField(default=False, db_index=True)
+    acknowledged_at = models.DateTimeField(null=True, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        verbose_name = 'Notification'
+        verbose_name_plural = 'Notifications'
+        ordering = ['-created_at']
+        constraints = [
+            models.UniqueConstraint(fields=['event', 'recipient'], condition=models.Q(event__isnull=False), name='unique_event_recipient_notification')
+        ]
+        indexes = [
+            models.Index(fields=['recipient', 'is_read']),
+            models.Index(fields=['recipient', '-created_at']),
+            models.Index(fields=['shipment', '-created_at']),
+            models.Index(fields=['priority']),
+        ]
+
+    def __str__(self):
+        return f"Notification for {self.recipient.email}: {self.title} (Read: {self.is_read})"
+
+
+class NotificationPreference(models.Model):
+    """
+    Per-user notification delivery and alert filtering preferences.
+    """
+    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='notification_preferences')
+
+    route_alerts_enabled = models.BooleanField(default=True)
+    eta_alerts_enabled = models.BooleanField(default=True)
+    risk_alerts_enabled = models.BooleanField(default=True)
+    incident_alerts_enabled = models.BooleanField(default=True)
+    fuel_alerts_enabled = models.BooleanField(default=True)
+    market_alerts_enabled = models.BooleanField(default=True)
+    automation_alerts_enabled = models.BooleanField(default=True)
+    shipment_updates_enabled = models.BooleanField(default=True)
+    system_alerts_enabled = models.BooleanField(default=True)
+    critical_alerts_enabled = models.BooleanField(default=True)
+
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Notification Preference'
+        verbose_name_plural = 'Notification Preferences'
+
+    def __str__(self):
+        return f"Preferences for {self.user.email}"
+
+
+
 

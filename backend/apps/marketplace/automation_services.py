@@ -286,6 +286,27 @@ class AutomationService:
                         created_count += 1
                         created_recommendations.append(rec)
 
+                        try:
+                            from apps.marketplace.realtime_services import OperationalEventService
+                            from apps.marketplace.models import OperationalEventType
+                            OperationalEventService.create_event(
+                                event_type=OperationalEventType.AUTOMATION_RECOMMENDATION,
+                                severity=rec.priority,
+                                shipment=shipment,
+                                source='AUTOMATION_ENGINE',
+                                title=rec.title,
+                                description=rec.description,
+                                payload={
+                                    "recommendation_id": rec.id,
+                                    "recommendation_type": rec.recommendation_type,
+                                    "priority": rec.priority,
+                                    "recommended_action": rec.recommended_action
+                                }
+                            )
+                        except Exception as e:
+                            logger.warning(f"Failed to emit OperationalEvent for rec #{rec.id}: {str(e)}")
+
+
         return {
             "shipment_id": shipment.id,
             "evaluated_rules": evaluated_count,
@@ -440,8 +461,30 @@ class AutomationService:
             recommendation.execution_result = exec_result
             recommendation.save(update_fields=['status', 'execution_result', 'updated_at'])
 
+            try:
+                from apps.marketplace.realtime_services import OperationalEventService
+                from apps.marketplace.models import OperationalEventType, EventSeverity
+                OperationalEventService.create_event(
+                    event_type=OperationalEventType.AUTOMATION_EXECUTED,
+                    severity=EventSeverity.MEDIUM,
+                    shipment=recommendation.shipment,
+                    actor=user,
+                    source='WORKFLOW_EXECUTION',
+                    title=f"Workflow Action Executed: {recommendation.title}",
+                    description=f"Action '{recommendation.recommendation_type}' executed by {user.get_full_name() or user.email}",
+                    payload={
+                        "recommendation_id": recommendation.id,
+                        "execution_id": execution.id,
+                        "action_type": execution.action_type,
+                        "result": execution.result
+                    }
+                )
+            except Exception as e:
+                logger.warning(f"Failed to emit OperationalEvent for execution #{execution.id}: {str(e)}")
+
             logger.info(f"Recommendation #{recommendation.id} EXECUTED by user #{user.id}")
             return execution
+
 
     @classmethod
     def get_recommendation_history(cls, shipment: Shipment):
