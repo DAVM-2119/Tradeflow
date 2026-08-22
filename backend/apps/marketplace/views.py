@@ -2347,6 +2347,398 @@ class InboundWebhookReceiverAPIView(APIView):
         return Response(serializer.data, status=status.HTTP_200_OK)
 
 
+# ============================================================================
+# PHASE 19: ADVANCED SECURITY, COMPLIANCE & GOVERNANCE VIEWS
+# ============================================================================
+from apps.marketplace.security_services import SecurityGovernanceService
+from apps.marketplace.security_serializers import (
+    SecurityAuditEventSerializer,
+    SecurityIncidentSerializer,
+    SecurityIncidentUpdateSerializer,
+    SecurityPolicySerializer,
+    SecurityPolicyCreateSerializer,
+    SecurityOverviewSerializer,
+    AuditIntegritySerializer,
+    ComplianceReportSerializer,
+    UserSecurityHistorySerializer,
+)
+from django.utils import timezone
+from django.db.models import Q
+from django.contrib.auth import get_user_model
+from apps.marketplace.models import SecurityAuditEvent, SecurityIncident, SecurityPolicy, SecurityIncidentStatus, SecurityAuditEventType
+
+User = get_user_model()
+
+
+
+
+class SecurityOverviewAPIView(APIView):
+    """
+    GET: Retrieve administrative security overview metrics, incident tallies, and audit integrity status (Admin Only).
+    """
+    permission_classes = [permissions.IsAuthenticated, permissions.IsAdminUser]
+    serializer_class = SecurityOverviewSerializer
+
+    @extend_schema(request=None, responses={200: SecurityOverviewSerializer})
+    def get(self, request):
+        overview_data = SecurityGovernanceService.get_security_overview()
+        serializer = SecurityOverviewSerializer(overview_data)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class SecurityAuditEventListAPIView(APIView):
+    """
+    GET: Query immutable security audit log events with filtering by type, severity, actor, and dates (Admin Only).
+    """
+    permission_classes = [permissions.IsAuthenticated, permissions.IsAdminUser]
+    serializer_class = SecurityAuditEventSerializer
+
+    @extend_schema(request=None, responses={200: SecurityAuditEventSerializer(many=True)})
+    def get(self, request):
+        qs = SecurityAuditEvent.objects.all()
+
+        evt_type = request.query_params.get('event_type')
+        if evt_type:
+            qs = qs.filter(event_type=evt_type)
+
+        severity = request.query_params.get('severity')
+        if severity:
+            qs = qs.filter(severity=severity)
+
+        actor_id = request.query_params.get('actor_id')
+        if actor_id:
+            qs = qs.filter(actor_id=actor_id)
+
+        target_user_id = request.query_params.get('target_user_id')
+        if target_user_id:
+            qs = qs.filter(target_user_id=target_user_id)
+
+        req_id = request.query_params.get('request_id')
+        if req_id:
+            qs = qs.filter(request_id=req_id)
+
+        serializer = SecurityAuditEventSerializer(qs[:200], many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class SecurityAuditEventDetailAPIView(APIView):
+    """
+    GET: Retrieve detailed context and cryptographic hash parameters for a specific audit log record (Admin Only).
+    """
+    permission_classes = [permissions.IsAuthenticated, permissions.IsAdminUser]
+    serializer_class = SecurityAuditEventSerializer
+
+    @extend_schema(request=None, responses={200: SecurityAuditEventSerializer})
+    def get(self, request, pk):
+        evt = SecurityAuditEvent.objects.filter(id=pk).first()
+        if not evt:
+            return Response({"detail": "Security audit event not found."}, status=status.HTTP_404_NOT_FOUND)
+        serializer = SecurityAuditEventSerializer(evt)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class SecurityIncidentListAPIView(APIView):
+    """
+    GET: List detected security incidents and threat investigations (Admin Only).
+    """
+    permission_classes = [permissions.IsAuthenticated, permissions.IsAdminUser]
+    serializer_class = SecurityIncidentSerializer
+
+    @extend_schema(request=None, responses={200: SecurityIncidentSerializer(many=True)})
+    def get(self, request):
+        qs = SecurityIncident.objects.all()
+
+        status_param = request.query_params.get('status')
+        if status_param:
+            qs = qs.filter(status=status_param)
+
+        severity = request.query_params.get('severity')
+        if severity:
+            qs = qs.filter(severity=severity)
+
+        serializer = SecurityIncidentSerializer(qs[:100], many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class SecurityIncidentDetailAPIView(APIView):
+    """
+    GET: Retrieve security incident details (Admin Only).
+    PATCH: Update security incident fields and metadata (Admin Only).
+    """
+    permission_classes = [permissions.IsAuthenticated, permissions.IsAdminUser]
+    serializer_class = SecurityIncidentSerializer
+
+    @extend_schema(request=None, responses={200: SecurityIncidentSerializer})
+    def get(self, request, pk):
+        inc = SecurityIncident.objects.filter(id=pk).first()
+        if not inc:
+            return Response({"detail": "Security incident not found."}, status=status.HTTP_404_NOT_FOUND)
+        serializer = SecurityIncidentSerializer(inc)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    @extend_schema(request=SecurityIncidentUpdateSerializer, responses={200: SecurityIncidentSerializer})
+    def patch(self, request, pk):
+        inc = SecurityIncident.objects.filter(id=pk).first()
+        if not inc:
+            return Response({"detail": "Security incident not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = SecurityIncidentUpdateSerializer(inc, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+
+        SecurityGovernanceService.record_audit_event(
+            event_type=SecurityAuditEventType.ADMIN_ACTION,
+            action="UPDATE_SECURITY_INCIDENT",
+            actor=request.user,
+            target_model="SecurityIncident",
+            target_object_id=str(inc.id),
+            description=f"Updated security incident #{inc.id}",
+            request=request
+        )
+
+        res_serializer = SecurityIncidentSerializer(inc)
+        return Response(res_serializer.data, status=status.HTTP_200_OK)
+
+
+class SecurityIncidentAssignAPIView(APIView):
+    """
+    POST: Assign a security incident to an administrative investigator (Admin Only).
+    """
+    permission_classes = [permissions.IsAuthenticated, permissions.IsAdminUser]
+    serializer_class = SecurityIncidentSerializer
+
+    @extend_schema(request=None, responses={200: SecurityIncidentSerializer})
+    def post(self, request, pk):
+        inc = SecurityIncident.objects.filter(id=pk).first()
+        if not inc:
+            return Response({"detail": "Security incident not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        assignee_id = request.data.get('assigned_to_id') or request.user.id
+        assignee = User.objects.filter(id=assignee_id).first()
+        if not assignee:
+            return Response({"detail": "Assignee user not found."}, status=status.HTTP_400_BAD_REQUEST)
+
+        inc.assigned_to = assignee
+        inc.status = SecurityIncidentStatus.INVESTIGATING
+        inc.save()
+
+        SecurityGovernanceService.record_audit_event(
+            event_type=SecurityAuditEventType.ADMIN_ACTION,
+            action="ASSIGN_SECURITY_INCIDENT",
+            actor=request.user,
+            target_user=assignee,
+            target_model="SecurityIncident",
+            target_object_id=str(inc.id),
+            description=f"Assigned incident #{inc.id} to {assignee.email}",
+            request=request
+        )
+
+        serializer = SecurityIncidentSerializer(inc)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class SecurityIncidentResolveAPIView(APIView):
+    """
+    POST: Mark a security incident as resolved with resolution audit notes (Admin Only).
+    """
+    permission_classes = [permissions.IsAuthenticated, permissions.IsAdminUser]
+    serializer_class = SecurityIncidentSerializer
+
+    @extend_schema(request=None, responses={200: SecurityIncidentSerializer})
+    def post(self, request, pk):
+        inc = SecurityIncident.objects.filter(id=pk).first()
+        if not inc:
+            return Response({"detail": "Security incident not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        notes = request.data.get('resolution_notes', 'Resolved by administrator.')
+        inc.status = SecurityIncidentStatus.RESOLVED
+        inc.resolved_at = timezone.now()
+        inc.resolution_notes = notes
+        inc.save()
+
+        SecurityGovernanceService.record_audit_event(
+            event_type=SecurityAuditEventType.ADMIN_ACTION,
+            action="RESOLVE_SECURITY_INCIDENT",
+            actor=request.user,
+            target_model="SecurityIncident",
+            target_object_id=str(inc.id),
+            description=f"Resolved incident #{inc.id}",
+            request=request
+        )
+
+        serializer = SecurityIncidentSerializer(inc)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class SecurityIncidentDismissAPIView(APIView):
+    """
+    POST: Dismiss a security incident as false positive or non-actionable (Admin Only).
+    """
+    permission_classes = [permissions.IsAuthenticated, permissions.IsAdminUser]
+    serializer_class = SecurityIncidentSerializer
+
+    @extend_schema(request=None, responses={200: SecurityIncidentSerializer})
+    def post(self, request, pk):
+        inc = SecurityIncident.objects.filter(id=pk).first()
+        if not inc:
+            return Response({"detail": "Security incident not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        notes = request.data.get('resolution_notes', 'Dismissed as false positive.')
+        inc.status = SecurityIncidentStatus.DISMISSED
+        inc.resolution_notes = notes
+        inc.save()
+
+        SecurityGovernanceService.record_audit_event(
+            event_type=SecurityAuditEventType.ADMIN_ACTION,
+            action="DISMISS_SECURITY_INCIDENT",
+            actor=request.user,
+            target_model="SecurityIncident",
+            target_object_id=str(inc.id),
+            description=f"Dismissed incident #{inc.id}",
+            request=request
+        )
+
+        serializer = SecurityIncidentSerializer(inc)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class UserSecurityHistoryAPIView(APIView):
+    """
+    GET: Retrieve comprehensive security audit events for a specific user (Admin Only).
+    """
+    permission_classes = [permissions.IsAuthenticated, permissions.IsAdminUser]
+    serializer_class = UserSecurityHistorySerializer
+
+    @extend_schema(request=None, responses={200: UserSecurityHistorySerializer})
+    def get(self, request, pk):
+        target_user = User.objects.filter(id=pk).first()
+        if not target_user:
+            return Response({"detail": "User not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        qs = SecurityAuditEvent.objects.filter(Q(actor=target_user) | Q(target_user=target_user))
+        tot_events = qs.count()
+        recent = list(qs[:50])
+
+        recent_serialized = SecurityAuditEventSerializer(recent, many=True).data
+
+        data = {
+            "user_id": target_user.id,
+            "user_email": target_user.email,
+            "role": str(getattr(target_user, 'role', '')),
+            "is_active": target_user.is_active,
+            "total_audit_events": tot_events,
+            "recent_events": recent_serialized
+        }
+        return Response(data, status=status.HTTP_200_OK)
+
+
+class SecurityPolicyListCreateAPIView(APIView):
+    """
+    GET: List configured security policies (Admin Only).
+    POST: Create a new security policy rule (Admin Only).
+    """
+    permission_classes = [permissions.IsAuthenticated, permissions.IsAdminUser]
+    serializer_class = SecurityPolicySerializer
+
+    @extend_schema(request=None, responses={200: SecurityPolicySerializer(many=True)})
+    def get(self, request):
+        qs = SecurityPolicy.objects.all()
+        serializer = SecurityPolicySerializer(qs, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    @extend_schema(request=SecurityPolicyCreateSerializer, responses={201: SecurityPolicySerializer})
+    def post(self, request):
+        serializer = SecurityPolicyCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        policy = serializer.save(created_by=request.user)
+
+        SecurityGovernanceService.record_audit_event(
+            event_type=SecurityAuditEventType.SECURITY_POLICY_VIOLATION,
+            action="CREATE_SECURITY_POLICY",
+            actor=request.user,
+            target_model="SecurityPolicy",
+            target_object_id=str(policy.id),
+            description=f"Created security policy '{policy.name}'",
+            request=request
+        )
+
+        res_serializer = SecurityPolicySerializer(policy)
+        return Response(res_serializer.data, status=status.HTTP_201_CREATED)
+
+
+class SecurityPolicyDetailAPIView(APIView):
+    """
+    PATCH: Update an existing security policy configuration (Admin Only).
+    """
+    permission_classes = [permissions.IsAuthenticated, permissions.IsAdminUser]
+    serializer_class = SecurityPolicySerializer
+
+    @extend_schema(request=SecurityPolicySerializer, responses={200: SecurityPolicySerializer})
+    def patch(self, request, pk):
+        policy = SecurityPolicy.objects.filter(id=pk).first()
+        if not policy:
+            return Response({"detail": "Security policy not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = SecurityPolicySerializer(policy, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save(updated_by=request.user)
+
+        SecurityGovernanceService.record_audit_event(
+            event_type=SecurityAuditEventType.ADMIN_ACTION,
+            action="UPDATE_SECURITY_POLICY",
+            actor=request.user,
+            target_model="SecurityPolicy",
+            target_object_id=str(policy.id),
+            description=f"Updated security policy '{policy.name}'",
+            request=request
+        )
+
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class AuditIntegrityCheckAPIView(APIView):
+    """
+    GET: Verify cryptographic SHA-256 hash chaining and audit record integrity across historical audit events (Admin Only).
+    """
+    permission_classes = [permissions.IsAuthenticated, permissions.IsAdminUser]
+    serializer_class = AuditIntegritySerializer
+
+    @extend_schema(request=None, responses={200: AuditIntegritySerializer})
+    def get(self, request):
+        integrity_res = SecurityGovernanceService.verify_audit_chain()
+        serializer = AuditIntegritySerializer(integrity_res)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class SecurityComplianceReportAPIView(APIView):
+    """
+    GET: Generate enterprise compliance audit reports in JSON or CSV export format (Admin Only).
+    """
+    permission_classes = [permissions.IsAuthenticated, permissions.IsAdminUser]
+    serializer_class = ComplianceReportSerializer
+
+    def perform_content_negotiation(self, request, force=False):
+        renderers = self.get_renderers()
+        return (renderers[0], renderers[0].media_type)
+
+    @extend_schema(request=None, responses={200: ComplianceReportSerializer})
+    def get(self, request, report_type):
+        export_format = (request.GET.get('format') or request.query_params.get('format') or 'json').lower()
+        filters = request.query_params.dict()
+
+        report_data = SecurityGovernanceService.get_compliance_report(report_type, filters)
+
+        if export_format == 'csv':
+            csv_content = SecurityGovernanceService.render_csv_compliance_report(report_data, report_type)
+            response = HttpResponse(csv_content, content_type='text/csv')
+            response['Content-Disposition'] = f'attachment; filename="tradeflow_compliance_report_{report_type}.csv"'
+            return response
+
+        serializer = ComplianceReportSerializer(report_data)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+
 
 
 

@@ -2468,6 +2468,357 @@ paths:
               schema:
                 $ref: '#/components/schemas/Rating'
           description: ''
+  /api/v1/security/audit-integrity/:
+    get:
+      operationId: v1_security_audit_integrity_retrieve
+      description: 'GET: Verify cryptographic SHA-256 hash chaining and audit record
+        integrity across historical audit events (Admin Only).'
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditIntegrity'
+          description: ''
+  /api/v1/security/events/:
+    get:
+      operationId: v1_security_events_list
+      description: 'GET: Query immutable security audit log events with filtering
+        by type, severity, actor, and dates (Admin Only).'
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SecurityAuditEvent'
+          description: ''
+  /api/v1/security/events/{id}/:
+    get:
+      operationId: v1_security_events_retrieve
+      description: 'GET: Retrieve detailed context and cryptographic hash parameters
+        for a specific audit log record (Admin Only).'
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SecurityAuditEvent'
+          description: ''
+  /api/v1/security/incidents/:
+    get:
+      operationId: v1_security_incidents_list
+      description: 'GET: List detected security incidents and threat investigations
+        (Admin Only).'
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SecurityIncident'
+          description: ''
+  /api/v1/security/incidents/{id}/:
+    get:
+      operationId: v1_security_incidents_retrieve
+      description: |-
+        GET: Retrieve security incident details (Admin Only).
+        PATCH: Update security incident fields and metadata (Admin Only).
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SecurityIncident'
+          description: ''
+    patch:
+      operationId: v1_security_incidents_partial_update
+      description: |-
+        GET: Retrieve security incident details (Admin Only).
+        PATCH: Update security incident fields and metadata (Admin Only).
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - v1
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchedSecurityIncidentUpdate'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/PatchedSecurityIncidentUpdate'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/PatchedSecurityIncidentUpdate'
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SecurityIncident'
+          description: ''
+  /api/v1/security/incidents/{id}/assign/:
+    post:
+      operationId: v1_security_incidents_assign_create
+      description: 'POST: Assign a security incident to an administrative investigator
+        (Admin Only).'
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SecurityIncident'
+          description: ''
+  /api/v1/security/incidents/{id}/dismiss/:
+    post:
+      operationId: v1_security_incidents_dismiss_create
+      description: 'POST: Dismiss a security incident as false positive or non-actionable
+        (Admin Only).'
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SecurityIncident'
+          description: ''
+  /api/v1/security/incidents/{id}/resolve/:
+    post:
+      operationId: v1_security_incidents_resolve_create
+      description: 'POST: Mark a security incident as resolved with resolution audit
+        notes (Admin Only).'
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SecurityIncident'
+          description: ''
+  /api/v1/security/overview/:
+    get:
+      operationId: v1_security_overview_retrieve
+      description: 'GET: Retrieve administrative security overview metrics, incident
+        tallies, and audit integrity status (Admin Only).'
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SecurityOverview'
+          description: ''
+  /api/v1/security/policies/:
+    get:
+      operationId: v1_security_policies_list
+      description: |-
+        GET: List configured security policies (Admin Only).
+        POST: Create a new security policy rule (Admin Only).
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SecurityPolicy'
+          description: ''
+    post:
+      operationId: v1_security_policies_create
+      description: |-
+        GET: List configured security policies (Admin Only).
+        POST: Create a new security policy rule (Admin Only).
+      tags:
+      - v1
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SecurityPolicyCreate'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/SecurityPolicyCreate'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/SecurityPolicyCreate'
+        required: true
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SecurityPolicy'
+          description: ''
+  /api/v1/security/policies/{id}/:
+    patch:
+      operationId: v1_security_policies_partial_update
+      description: 'PATCH: Update an existing security policy configuration (Admin
+        Only).'
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - v1
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchedSecurityPolicy'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/PatchedSecurityPolicy'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/PatchedSecurityPolicy'
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SecurityPolicy'
+          description: ''
+  /api/v1/security/reports/{report_type}/:
+    get:
+      operationId: v1_security_reports_retrieve
+      description: 'GET: Generate enterprise compliance audit reports in JSON or CSV
+        export format (Admin Only).'
+      parameters:
+      - in: path
+        name: report_type
+        schema:
+          type: string
+        required: true
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ComplianceReport'
+          description: ''
+  /api/v1/security/users/{id}/history/:
+    get:
+      operationId: v1_security_users_history_retrieve
+      description: 'GET: Retrieve comprehensive security audit events for a specific
+        user (Admin Only).'
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserSecurityHistory'
+          description: ''
   /api/v1/settlements/:
     get:
       operationId: v1_settlements_list
@@ -4068,6 +4419,30 @@ components:
           type: integer
       required:
       - driver_id
+    AuditIntegrity:
+      type: object
+      properties:
+        status:
+          type: string
+        events_checked:
+          type: integer
+        invalid_events:
+          type: integer
+        chain_valid:
+          type: boolean
+        verified_at:
+          type: string
+          format: date-time
+        details:
+          type: array
+          items:
+            type: string
+      required:
+      - chain_valid
+      - events_checked
+      - invalid_events
+      - status
+      - verified_at
     AutomationAnalytics:
       type: object
       properties:
@@ -4571,6 +4946,37 @@ components:
         * `IN_TRANSIT` - In Transit
         * `DELIVERED` - Delivered
         * `CANCELLED` - Cancelled
+    ComplianceReport:
+      type: object
+      properties:
+        report_type:
+          type: string
+        title:
+          type: string
+        generated_at:
+          type: string
+          format: date-time
+        filters_applied:
+          type: object
+          additionalProperties: {}
+        record_count:
+          type: integer
+        summary:
+          type: object
+          additionalProperties: {}
+        records:
+          type: array
+          items:
+            type: object
+            additionalProperties: {}
+      required:
+      - filters_applied
+      - generated_at
+      - record_count
+      - records
+      - report_type
+      - summary
+      - title
     ConfirmationStatusEnum:
       enum:
       - SUBMITTED
@@ -4743,7 +5149,7 @@ components:
           format: email
           readOnly: true
         incident_type:
-          $ref: '#/components/schemas/IncidentTypeEnum'
+          $ref: '#/components/schemas/DriverIncidentReportIncidentTypeEnum'
         latitude:
           type: string
           format: decimal
@@ -4787,6 +5193,24 @@ components:
       - shipment
       - shipment_tracking_number
       - updated_at
+    DriverIncidentReportIncidentTypeEnum:
+      enum:
+      - ACCIDENT
+      - CHECKPOINT_DELAY
+      - FUEL_UNAVAILABLE
+      - ROAD_PROBLEM
+      - SECURITY_INCIDENT
+      - VEHICLE_BREAKDOWN
+      - OTHER
+      type: string
+      description: |-
+        * `ACCIDENT` - Traffic Accident
+        * `CHECKPOINT_DELAY` - Customs / Police Checkpoint Delay
+        * `FUEL_UNAVAILABLE` - Fuel Shortage / Station Unavailable
+        * `ROAD_PROBLEM` - Road Damage / Blockade
+        * `SECURITY_INCIDENT` - Security Threat / Armed Unrest
+        * `VEHICLE_BREAKDOWN` - Mechanical Breakdown
+        * `OTHER` - Other Incident
     ETAPredictionResponse:
       type: object
       properties:
@@ -5464,24 +5888,6 @@ components:
       required:
       - level
       - risk_score
-    IncidentTypeEnum:
-      enum:
-      - ACCIDENT
-      - CHECKPOINT_DELAY
-      - FUEL_UNAVAILABLE
-      - ROAD_PROBLEM
-      - SECURITY_INCIDENT
-      - VEHICLE_BREAKDOWN
-      - OTHER
-      type: string
-      description: |-
-        * `ACCIDENT` - Traffic Accident
-        * `CHECKPOINT_DELAY` - Customs / Police Checkpoint Delay
-        * `FUEL_UNAVAILABLE` - Fuel Shortage / Station Unavailable
-        * `ROAD_PROBLEM` - Road Damage / Blockade
-        * `SECURITY_INCIDENT` - Security Threat / Armed Unrest
-        * `VEHICLE_BREAKDOWN` - Mechanical Breakdown
-        * `OTHER` - Other Incident
     IntegrationEventPublish:
       type: object
       properties:
@@ -6177,7 +6583,7 @@ components:
           readOnly: true
         severity:
           allOf:
-          - $ref: '#/components/schemas/SeverityEnum'
+          - $ref: '#/components/schemas/Severity4eaEnum'
           readOnly: true
         shipment:
           type: integer
@@ -7001,6 +7407,71 @@ components:
           type: boolean
         critical_alerts_enabled:
           type: boolean
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+    PatchedSecurityIncidentUpdate:
+      type: object
+      properties:
+        status:
+          $ref: '#/components/schemas/StatusC4cEnum'
+        severity:
+          $ref: '#/components/schemas/SeverityA70Enum'
+        assigned_to:
+          type: integer
+          nullable: true
+        resolution_notes:
+          type: string
+        metadata: {}
+    PatchedSecurityPolicy:
+      type: object
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        name:
+          type: string
+          maxLength: 255
+        policy_type:
+          type: string
+          maxLength: 100
+        enabled:
+          type: boolean
+        threshold:
+          type: integer
+          maximum: 2147483647
+          minimum: 0
+        window_seconds:
+          type: integer
+          maximum: 2147483647
+          minimum: 0
+        severity:
+          $ref: '#/components/schemas/SeverityA70Enum'
+        description:
+          type: string
+        configuration: {}
+        created_by:
+          type: integer
+          readOnly: true
+          nullable: true
+        created_by_email:
+          type: string
+          format: email
+          title: Email address
+          readOnly: true
+        updated_by:
+          type: integer
+          nullable: true
+        updated_by_email:
+          type: string
+          format: email
+          title: Email address
+          readOnly: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
         updated_at:
           type: string
           format: date-time
@@ -8304,7 +8775,376 @@ components:
         * `HIGH_FUEL_RISK` - High Fuel Consumption/Cost
         * `HIGH_MARKET_PRESSURE` - High Corridor Market Pressure
         * `STALE_GPS_DATA` - Stale GPS Telemetry
-    SeverityEnum:
+    SecurityAuditEvent:
+      type: object
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        event_type:
+          allOf:
+          - $ref: '#/components/schemas/SecurityAuditEventEventTypeEnum'
+          readOnly: true
+        severity:
+          allOf:
+          - $ref: '#/components/schemas/SeverityA70Enum'
+          readOnly: true
+        actor:
+          type: integer
+          readOnly: true
+          nullable: true
+        actor_email:
+          type: string
+          format: email
+          title: Email address
+          readOnly: true
+        actor_role:
+          type: string
+          readOnly: true
+        target_user:
+          type: integer
+          readOnly: true
+          nullable: true
+        target_user_email:
+          type: string
+          format: email
+          title: Email address
+          readOnly: true
+        target_model:
+          type: string
+          readOnly: true
+        target_object_id:
+          type: string
+          readOnly: true
+        action:
+          type: string
+          readOnly: true
+        description:
+          type: string
+          readOnly: true
+        request_id:
+          type: string
+          readOnly: true
+        ip_address:
+          type: string
+          readOnly: true
+          nullable: true
+        user_agent:
+          type: string
+          readOnly: true
+        endpoint:
+          type: string
+          readOnly: true
+        http_method:
+          type: string
+          readOnly: true
+        metadata:
+          readOnly: true
+        previous_hash:
+          type: string
+          readOnly: true
+        event_hash:
+          type: string
+          readOnly: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+      required:
+      - action
+      - actor
+      - actor_email
+      - actor_role
+      - created_at
+      - description
+      - endpoint
+      - event_hash
+      - event_type
+      - http_method
+      - id
+      - ip_address
+      - metadata
+      - previous_hash
+      - request_id
+      - severity
+      - target_model
+      - target_object_id
+      - target_user
+      - target_user_email
+      - user_agent
+    SecurityAuditEventEventTypeEnum:
+      enum:
+      - LOGIN_SUCCESS
+      - LOGIN_FAILURE
+      - LOGOUT
+      - TOKEN_REFRESH
+      - TOKEN_REVOKED
+      - PASSWORD_CHANGED
+      - PASSWORD_RESET_REQUESTED
+      - PASSWORD_RESET_COMPLETED
+      - ACCOUNT_LOCKED
+      - ACCOUNT_UNLOCKED
+      - USER_CREATED
+      - USER_UPDATED
+      - USER_DEACTIVATED
+      - USER_REACTIVATED
+      - ROLE_CHANGED
+      - PERMISSION_GRANTED
+      - PERMISSION_REVOKED
+      - SENSITIVE_DATA_ACCESSED
+      - ADMIN_ACTION
+      - API_ACCESS_DENIED
+      - WEBHOOK_SECURITY_FAILURE
+      - INTEGRATION_SECURITY_FAILURE
+      - SUSPICIOUS_ACTIVITY
+      - SECURITY_POLICY_VIOLATION
+      type: string
+      description: |-
+        * `LOGIN_SUCCESS` - Successful Login
+        * `LOGIN_FAILURE` - Failed Login Attempt
+        * `LOGOUT` - User Logout
+        * `TOKEN_REFRESH` - JWT Token Refresh
+        * `TOKEN_REVOKED` - JWT Token Revoked
+        * `PASSWORD_CHANGED` - Password Changed
+        * `PASSWORD_RESET_REQUESTED` - Password Reset Requested
+        * `PASSWORD_RESET_COMPLETED` - Password Reset Completed
+        * `ACCOUNT_LOCKED` - Account Locked
+        * `ACCOUNT_UNLOCKED` - Account Unlocked
+        * `USER_CREATED` - User Created
+        * `USER_UPDATED` - User Profile Updated
+        * `USER_DEACTIVATED` - User Deactivated
+        * `USER_REACTIVATED` - User Reactivated
+        * `ROLE_CHANGED` - User Role Changed
+        * `PERMISSION_GRANTED` - Permission Granted
+        * `PERMISSION_REVOKED` - Permission Revoked
+        * `SENSITIVE_DATA_ACCESSED` - Sensitive Data Accessed
+        * `ADMIN_ACTION` - Administrative Action Performed
+        * `API_ACCESS_DENIED` - API Access Denied (401/403)
+        * `WEBHOOK_SECURITY_FAILURE` - Webhook Signature/Security Failure
+        * `INTEGRATION_SECURITY_FAILURE` - Integration Security Failure
+        * `SUSPICIOUS_ACTIVITY` - Suspicious Activity Detected
+        * `SECURITY_POLICY_VIOLATION` - Security Policy Violation
+    SecurityIncident:
+      type: object
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        incident_type:
+          $ref: '#/components/schemas/SecurityIncidentIncidentTypeEnum'
+        severity:
+          $ref: '#/components/schemas/SeverityA70Enum'
+        status:
+          $ref: '#/components/schemas/StatusC4cEnum'
+        title:
+          type: string
+          maxLength: 255
+        description:
+          type: string
+        detected_at:
+          type: string
+          format: date-time
+          readOnly: true
+        detected_by:
+          type: integer
+          nullable: true
+        detected_by_email:
+          type: string
+          format: email
+          title: Email address
+          readOnly: true
+        assigned_to:
+          type: integer
+          nullable: true
+        assigned_to_email:
+          type: string
+          format: email
+          title: Email address
+          readOnly: true
+        resolved_at:
+          type: string
+          format: date-time
+          nullable: true
+        resolution_notes:
+          type: string
+        correlation_id:
+          type: string
+          maxLength: 255
+        metadata: {}
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+      required:
+      - assigned_to_email
+      - created_at
+      - detected_at
+      - detected_by_email
+      - id
+      - incident_type
+      - title
+      - updated_at
+    SecurityIncidentIncidentTypeEnum:
+      enum:
+      - BRUTE_FORCE
+      - ACCOUNT_COMPROMISE
+      - PRIVILEGE_ESCALATION
+      - SUSPICIOUS_API_ACCESS
+      - SUSPICIOUS_LOGIN
+      - WEBHOOK_ATTACK
+      - INTEGRATION_SECURITY_FAILURE
+      - UNAUTHORIZED_DATA_ACCESS
+      - POLICY_VIOLATION
+      - AUDIT_INTEGRITY_FAILURE
+      type: string
+      description: |-
+        * `BRUTE_FORCE` - Brute Force Attack
+        * `ACCOUNT_COMPROMISE` - Account Compromise Suspected
+        * `PRIVILEGE_ESCALATION` - Privilege Escalation Attempt
+        * `SUSPICIOUS_API_ACCESS` - Suspicious API Access
+        * `SUSPICIOUS_LOGIN` - Suspicious Login Activity
+        * `WEBHOOK_ATTACK` - Webhook Tampering / Signature Failure
+        * `INTEGRATION_SECURITY_FAILURE` - Integration Authentication Failure
+        * `UNAUTHORIZED_DATA_ACCESS` - Unauthorized Data Access Attempt
+        * `POLICY_VIOLATION` - Security Policy Violation
+        * `AUDIT_INTEGRITY_FAILURE` - Audit Chain Hash Integrity Violation
+    SecurityOverview:
+      type: object
+      properties:
+        total_security_events:
+          type: integer
+        critical_events:
+          type: integer
+        high_severity_events:
+          type: integer
+        failed_logins:
+          type: integer
+        successful_logins:
+          type: integer
+        access_denials:
+          type: integer
+        open_security_incidents:
+          type: integer
+        investigating_incidents:
+          type: integer
+        resolved_incidents:
+          type: integer
+        privilege_changes:
+          type: integer
+        webhook_security_failures:
+          type: integer
+        audit_integrity_status:
+          type: string
+        generated_at:
+          type: string
+          format: date-time
+      required:
+      - access_denials
+      - audit_integrity_status
+      - critical_events
+      - failed_logins
+      - generated_at
+      - high_severity_events
+      - investigating_incidents
+      - open_security_incidents
+      - privilege_changes
+      - resolved_incidents
+      - successful_logins
+      - total_security_events
+      - webhook_security_failures
+    SecurityPolicy:
+      type: object
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        name:
+          type: string
+          maxLength: 255
+        policy_type:
+          type: string
+          maxLength: 100
+        enabled:
+          type: boolean
+        threshold:
+          type: integer
+          maximum: 2147483647
+          minimum: 0
+        window_seconds:
+          type: integer
+          maximum: 2147483647
+          minimum: 0
+        severity:
+          $ref: '#/components/schemas/SeverityA70Enum'
+        description:
+          type: string
+        configuration: {}
+        created_by:
+          type: integer
+          readOnly: true
+          nullable: true
+        created_by_email:
+          type: string
+          format: email
+          title: Email address
+          readOnly: true
+        updated_by:
+          type: integer
+          nullable: true
+        updated_by_email:
+          type: string
+          format: email
+          title: Email address
+          readOnly: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+      required:
+      - created_at
+      - created_by
+      - created_by_email
+      - id
+      - name
+      - policy_type
+      - updated_at
+      - updated_by_email
+    SecurityPolicyCreate:
+      type: object
+      properties:
+        name:
+          type: string
+          maxLength: 255
+        policy_type:
+          type: string
+          maxLength: 100
+        enabled:
+          type: boolean
+        threshold:
+          type: integer
+          maximum: 2147483647
+          minimum: 0
+        window_seconds:
+          type: integer
+          maximum: 2147483647
+          minimum: 0
+        severity:
+          $ref: '#/components/schemas/SeverityA70Enum'
+        description:
+          type: string
+        configuration: {}
+      required:
+      - name
+      - policy_type
+    Severity4eaEnum:
       enum:
       - LOW
       - MEDIUM
@@ -8312,6 +9152,20 @@ components:
       - CRITICAL
       type: string
       description: |-
+        * `LOW` - Low Severity
+        * `MEDIUM` - Medium Severity
+        * `HIGH` - High Severity
+        * `CRITICAL` - Critical Severity
+    SeverityA70Enum:
+      enum:
+      - INFO
+      - LOW
+      - MEDIUM
+      - HIGH
+      - CRITICAL
+      type: string
+      description: |-
+        * `INFO` - Informational
         * `LOW` - Low Severity
         * `MEDIUM` - Medium Severity
         * `HIGH` - High Severity
@@ -8701,6 +9555,20 @@ components:
         * `FAILED` - Payment Failed
         * `CANCELLED` - Cancelled
         * `REFUNDED` - Refunded
+    StatusC4cEnum:
+      enum:
+      - OPEN
+      - INVESTIGATING
+      - CONTAINED
+      - RESOLVED
+      - DISMISSED
+      type: string
+      description: |-
+        * `OPEN` - Open
+        * `INVESTIGATING` - Under Investigation
+        * `CONTAINED` - Contained
+        * `RESOLVED` - Resolved
+        * `DISMISSED` - Dismissed / False Positive
     StatusC64Enum:
       enum:
       - ACTIVE
@@ -9210,6 +10078,30 @@ components:
       - first_name
       - last_name
       - password
+    UserSecurityHistory:
+      type: object
+      properties:
+        user_id:
+          type: integer
+        user_email:
+          type: string
+        role:
+          type: string
+        is_active:
+          type: boolean
+        total_audit_events:
+          type: integer
+        recent_events:
+          type: array
+          items:
+            $ref: '#/components/schemas/SecurityAuditEvent'
+      required:
+      - is_active
+      - recent_events
+      - role
+      - total_audit_events
+      - user_email
+      - user_id
     Vehicle:
       type: object
       properties:

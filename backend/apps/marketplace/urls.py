@@ -123,7 +123,21 @@ from apps.marketplace.views import (
     WebhookDeliveryRetryAPIView,
     IntegrationEventPublishAPIView,
     InboundWebhookReceiverAPIView,
+    SecurityOverviewAPIView,
+    SecurityAuditEventListAPIView,
+    SecurityAuditEventDetailAPIView,
+    SecurityIncidentListAPIView,
+    SecurityIncidentDetailAPIView,
+    SecurityIncidentAssignAPIView,
+    SecurityIncidentResolveAPIView,
+    SecurityIncidentDismissAPIView,
+    UserSecurityHistoryAPIView,
+    SecurityPolicyListCreateAPIView,
+    SecurityPolicyDetailAPIView,
+    AuditIntegrityCheckAPIView,
+    SecurityComplianceReportAPIView,
 )
+
 
 
 
@@ -281,9 +295,25 @@ urlpatterns = [
     path('integrations/events/publish/', IntegrationEventPublishAPIView.as_view(), name='integration-event-publish'),
     path('webhooks/inbound/<int:integration_id>/', InboundWebhookReceiverAPIView.as_view(), name='inbound-webhook-receiver'),
 
+    # Phase 19: Advanced Security, Compliance & Governance
+    path('security/overview/', SecurityOverviewAPIView.as_view(), name='security-overview'),
+    path('security/events/', SecurityAuditEventListAPIView.as_view(), name='security-event-list'),
+    path('security/events/<int:pk>/', SecurityAuditEventDetailAPIView.as_view(), name='security-event-detail'),
+    path('security/incidents/', SecurityIncidentListAPIView.as_view(), name='security-incident-list'),
+    path('security/incidents/<int:pk>/', SecurityIncidentDetailAPIView.as_view(), name='security-incident-detail'),
+    path('security/incidents/<int:pk>/assign/', SecurityIncidentAssignAPIView.as_view(), name='security-incident-assign'),
+    path('security/incidents/<int:pk>/resolve/', SecurityIncidentResolveAPIView.as_view(), name='security-incident-resolve'),
+    path('security/incidents/<int:pk>/dismiss/', SecurityIncidentDismissAPIView.as_view(), name='security-incident-dismiss'),
+    path('security/users/<int:pk>/history/', UserSecurityHistoryAPIView.as_view(), name='user-security-history'),
+    path('security/policies/', SecurityPolicyListCreateAPIView.as_view(), name='security-policy-list-create'),
+    path('security/policies/<int:pk>/', SecurityPolicyDetailAPIView.as_view(), name='security-policy-detail'),
+    path('security/audit-integrity/', AuditIntegrityCheckAPIView.as_view(), name='security-audit-integrity'),
+    path('security/reports/<str:report_type>/', SecurityComplianceReportAPIView.as_view(), name='security-compliance-reports'),
+
     # Ratings
     path('ratings/', RatingListCreateView.as_view(), name='rating-list-create'),
 ]
+
 
 
 

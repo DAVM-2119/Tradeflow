@@ -323,5 +323,36 @@ class InboundWebhookEventAdmin(admin.ModelAdmin):
     readonly_fields = ('integration', 'event_type', 'external_event_id', 'payload', 'signature_valid', 'processing_status', 'idempotency_key', 'received_at', 'processed_at', 'error_message')
 
 
+# ============================================================================
+# PHASE 19: SECURITY, COMPLIANCE & GOVERNANCE ADMIN REGISTRATIONS
+# ============================================================================
+from apps.marketplace.models import SecurityAuditEvent, SecurityIncident, SecurityPolicy
+
+
+@admin.register(SecurityAuditEvent)
+class SecurityAuditEventAdmin(admin.ModelAdmin):
+    list_display = ('id', 'event_type', 'severity', 'actor', 'actor_role', 'target_user', 'action', 'request_id', 'created_at')
+    list_filter = ('severity', 'event_type', 'actor_role', 'created_at')
+    search_fields = ('action', 'description', 'request_id', 'ip_address', 'actor__email', 'target_user__email')
+    readonly_fields = ('event_type', 'severity', 'actor', 'actor_role', 'target_user', 'target_model', 'target_object_id', 'action', 'description', 'request_id', 'ip_address', 'user_agent', 'endpoint', 'http_method', 'metadata', 'previous_hash', 'event_hash', 'created_at')
+
+
+@admin.register(SecurityIncident)
+class SecurityIncidentAdmin(admin.ModelAdmin):
+    list_display = ('id', 'title', 'incident_type', 'severity', 'status', 'detected_by', 'assigned_to', 'detected_at', 'resolved_at')
+    list_filter = ('severity', 'status', 'incident_type', 'detected_at')
+    search_fields = ('title', 'description', 'correlation_id', 'resolution_notes')
+    readonly_fields = ('detected_at', 'created_at', 'updated_at')
+
+
+@admin.register(SecurityPolicy)
+class SecurityPolicyAdmin(admin.ModelAdmin):
+    list_display = ('name', 'policy_type', 'enabled', 'threshold', 'window_seconds', 'severity', 'updated_at')
+    list_filter = ('enabled', 'severity', 'policy_type')
+    search_fields = ('name', 'description')
+    readonly_fields = ('created_at', 'updated_at')
+
+
+
 
 

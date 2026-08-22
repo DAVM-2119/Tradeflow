@@ -1720,6 +1720,211 @@ class InboundWebhookEvent(models.Model):
         return f"Inbound #{self.id} ({self.event_type}) from {self.integration.name} -> {self.processing_status}"
 
 
+# ============================================================================
+# PHASE 19: ADVANCED SECURITY, COMPLIANCE & GOVERNANCE MODELS
+# ============================================================================
+
+class SecurityAuditEventSeverity(models.TextChoices):
+    INFO = 'INFO', 'Informational'
+    LOW = 'LOW', 'Low Severity'
+    MEDIUM = 'MEDIUM', 'Medium Severity'
+    HIGH = 'HIGH', 'High Severity'
+    CRITICAL = 'CRITICAL', 'Critical Severity'
+
+
+class SecurityAuditEventType(models.TextChoices):
+    LOGIN_SUCCESS = 'LOGIN_SUCCESS', 'Successful Login'
+    LOGIN_FAILURE = 'LOGIN_FAILURE', 'Failed Login Attempt'
+    LOGOUT = 'LOGOUT', 'User Logout'
+    TOKEN_REFRESH = 'TOKEN_REFRESH', 'JWT Token Refresh'
+    TOKEN_REVOKED = 'TOKEN_REVOKED', 'JWT Token Revoked'
+    PASSWORD_CHANGED = 'PASSWORD_CHANGED', 'Password Changed'
+    PASSWORD_RESET_REQUESTED = 'PASSWORD_RESET_REQUESTED', 'Password Reset Requested'
+    PASSWORD_RESET_COMPLETED = 'PASSWORD_RESET_COMPLETED', 'Password Reset Completed'
+    ACCOUNT_LOCKED = 'ACCOUNT_LOCKED', 'Account Locked'
+    ACCOUNT_UNLOCKED = 'ACCOUNT_UNLOCKED', 'Account Unlocked'
+    USER_CREATED = 'USER_CREATED', 'User Created'
+    USER_UPDATED = 'USER_UPDATED', 'User Profile Updated'
+    USER_DEACTIVATED = 'USER_DEACTIVATED', 'User Deactivated'
+    USER_REACTIVATED = 'USER_REACTIVATED', 'User Reactivated'
+    ROLE_CHANGED = 'ROLE_CHANGED', 'User Role Changed'
+    PERMISSION_GRANTED = 'PERMISSION_GRANTED', 'Permission Granted'
+    PERMISSION_REVOKED = 'PERMISSION_REVOKED', 'Permission Revoked'
+    SENSITIVE_DATA_ACCESSED = 'SENSITIVE_DATA_ACCESSED', 'Sensitive Data Accessed'
+    ADMIN_ACTION = 'ADMIN_ACTION', 'Administrative Action Performed'
+    API_ACCESS_DENIED = 'API_ACCESS_DENIED', 'API Access Denied (401/403)'
+    WEBHOOK_SECURITY_FAILURE = 'WEBHOOK_SECURITY_FAILURE', 'Webhook Signature/Security Failure'
+    INTEGRATION_SECURITY_FAILURE = 'INTEGRATION_SECURITY_FAILURE', 'Integration Security Failure'
+    SUSPICIOUS_ACTIVITY = 'SUSPICIOUS_ACTIVITY', 'Suspicious Activity Detected'
+    SECURITY_POLICY_VIOLATION = 'SECURITY_POLICY_VIOLATION', 'Security Policy Violation'
+
+
+class SecurityAuditEvent(models.Model):
+    """
+    Immutable, tamper-evident security audit log record with SHA-256 hash chaining.
+    """
+    event_type = models.CharField(max_length=50, choices=SecurityAuditEventType.choices, db_index=True)
+    severity = models.CharField(max_length=20, choices=SecurityAuditEventSeverity.choices, default=SecurityAuditEventSeverity.INFO, db_index=True)
+
+    actor = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='security_actions_performed'
+    )
+    actor_role = models.CharField(max_length=50, blank=True)
+
+    target_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='security_events_targeted'
+    )
+    target_model = models.CharField(max_length=100, blank=True)
+    target_object_id = models.CharField(max_length=255, blank=True)
+
+    action = models.CharField(max_length=100)
+    description = models.TextField(blank=True)
+
+    request_id = models.CharField(max_length=255, blank=True, db_index=True)
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    user_agent = models.TextField(blank=True)
+    endpoint = models.CharField(max_length=500, blank=True)
+    http_method = models.CharField(max_length=10, blank=True)
+
+    metadata = models.JSONField(default=dict, blank=True)
+
+    previous_hash = models.CharField(max_length=64, blank=True)
+    event_hash = models.CharField(max_length=64, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        verbose_name = 'Security Audit Event'
+        verbose_name_plural = 'Security Audit Events'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['created_at', 'event_type']),
+            models.Index(fields=['actor', 'created_at']),
+            models.Index(fields=['target_user', 'created_at']),
+            models.Index(fields=['severity', 'created_at']),
+        ]
+
+    def __str__(self):
+        actor_str = self.actor.email if self.actor else "System/Anonymous"
+        return f"Audit #{self.id} [{self.severity}] {self.event_type} by {actor_str} at {self.created_at}"
+
+
+class SecurityIncidentStatus(models.TextChoices):
+    OPEN = 'OPEN', 'Open'
+    INVESTIGATING = 'INVESTIGATING', 'Under Investigation'
+    CONTAINED = 'CONTAINED', 'Contained'
+    RESOLVED = 'RESOLVED', 'Resolved'
+    DISMISSED = 'DISMISSED', 'Dismissed / False Positive'
+
+
+class SecurityIncidentType(models.TextChoices):
+    BRUTE_FORCE = 'BRUTE_FORCE', 'Brute Force Attack'
+    ACCOUNT_COMPROMISE = 'ACCOUNT_COMPROMISE', 'Account Compromise Suspected'
+    PRIVILEGE_ESCALATION = 'PRIVILEGE_ESCALATION', 'Privilege Escalation Attempt'
+    SUSPICIOUS_API_ACCESS = 'SUSPICIOUS_API_ACCESS', 'Suspicious API Access'
+    SUSPICIOUS_LOGIN = 'SUSPICIOUS_LOGIN', 'Suspicious Login Activity'
+    WEBHOOK_ATTACK = 'WEBHOOK_ATTACK', 'Webhook Tampering / Signature Failure'
+    INTEGRATION_SECURITY_FAILURE = 'INTEGRATION_SECURITY_FAILURE', 'Integration Authentication Failure'
+    UNAUTHORIZED_DATA_ACCESS = 'UNAUTHORIZED_DATA_ACCESS', 'Unauthorized Data Access Attempt'
+    POLICY_VIOLATION = 'POLICY_VIOLATION', 'Security Policy Violation'
+    AUDIT_INTEGRITY_FAILURE = 'AUDIT_INTEGRITY_FAILURE', 'Audit Chain Hash Integrity Violation'
+
+
+class SecurityIncident(models.Model):
+    """
+    Security incident record tracking security threats, investigations, and resolution actions.
+    """
+    incident_type = models.CharField(max_length=50, choices=SecurityIncidentType.choices, db_index=True)
+    severity = models.CharField(max_length=20, choices=SecurityAuditEventSeverity.choices, default=SecurityAuditEventSeverity.MEDIUM, db_index=True)
+    status = models.CharField(max_length=20, choices=SecurityIncidentStatus.choices, default=SecurityIncidentStatus.OPEN, db_index=True)
+
+    title = models.CharField(max_length=255)
+    description = models.TextField(blank=True)
+
+    detected_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    detected_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='detected_incidents'
+    )
+    assigned_to = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='assigned_incidents'
+    )
+    resolved_at = models.DateTimeField(null=True, blank=True)
+    resolution_notes = models.TextField(blank=True)
+
+    correlation_id = models.CharField(max_length=255, blank=True, db_index=True)
+    metadata = models.JSONField(default=dict, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Security Incident'
+        verbose_name_plural = 'Security Incidents'
+        ordering = ['-detected_at']
+
+    def __str__(self):
+        return f"Incident #{self.id} [{self.severity}] {self.title} -> {self.status}"
+
+
+class SecurityPolicy(models.Model):
+    """
+    Configurable deterministic security policy threshold and governance rule.
+    """
+    name = models.CharField(max_length=255, unique=True)
+    policy_type = models.CharField(max_length=100, db_index=True)
+    enabled = models.BooleanField(default=True, db_index=True)
+
+    threshold = models.PositiveIntegerField(default=5)
+    window_seconds = models.PositiveIntegerField(default=600)
+    severity = models.CharField(max_length=20, choices=SecurityAuditEventSeverity.choices, default=SecurityAuditEventSeverity.HIGH)
+
+    description = models.TextField(blank=True)
+    configuration = models.JSONField(default=dict, blank=True)
+
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='created_security_policies'
+    )
+    updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='updated_security_policies'
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Security Policy'
+        verbose_name_plural = 'Security Policies'
+        ordering = ['name']
+
+    def __str__(self):
+        return f"Security Policy '{self.name}' ({self.policy_type}) - Enabled: {self.enabled}"
+
+
+
 
 
 
