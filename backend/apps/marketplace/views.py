@@ -1693,6 +1693,88 @@ class ShipmentOperationalSummaryAPIView(APIView):
         return Response(serializer.data, status=status.HTTP_200_OK)
 
 
+# ============================================================================
+# PHASE 16: PRODUCTION RELIABILITY, OBSERVABILITY & RESILIENCE VIEWS
+# ============================================================================
+from apps.marketplace.health_services import DependencyHealthService
+from apps.marketplace.observability import OperationalMetricsService
+from apps.marketplace.observability_serializers import (
+    SystemHealthSerializer,
+    SystemReadinessSerializer,
+    SystemMetricsSerializer,
+    SystemStatusSerializer,
+)
+
+
+class HealthCheckAPIView(APIView):
+    """
+    GET: Retrieve application process liveness status.
+    Answers: Is the API application process alive and responding to requests?
+    """
+    permission_classes = [permissions.AllowAny]
+    serializer_class = SystemHealthSerializer
+
+    @extend_schema(request=None, responses={200: SystemHealthSerializer})
+    def get(self, request):
+        data = DependencyHealthService.get_system_health()
+        serializer = SystemHealthSerializer(data)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class ReadinessCheckAPIView(APIView):
+    """
+    GET: Retrieve application dependency readiness status.
+    Verifies PostgreSQL database and Redis availability.
+    Returns 200 OK when ready, 503 Service Unavailable when degraded.
+    """
+    permission_classes = [permissions.AllowAny]
+    serializer_class = SystemReadinessSerializer
+
+    @extend_schema(request=None, responses={200: SystemReadinessSerializer, 503: SystemReadinessSerializer})
+    def get(self, request):
+        data, status_code = DependencyHealthService.get_system_readiness()
+        serializer = SystemReadinessSerializer(data)
+        return Response(serializer.data, status=status_code)
+
+
+class SystemMetricsAPIView(APIView):
+    """
+    GET: Retrieve internal operational reliability metrics (Admin Only).
+    Exposes request counts, error rates, dependency failure metrics, and WebSocket auth stats.
+    """
+    permission_classes = [permissions.IsAuthenticated, permissions.IsAdminUser]
+    serializer_class = SystemMetricsSerializer
+
+    @extend_schema(request=None, responses={200: SystemMetricsSerializer})
+    def get(self, request):
+        data = OperationalMetricsService.get_metrics_summary()
+        serializer = SystemMetricsSerializer(data)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class SystemStatusAPIView(APIView):
+    """
+    GET: Retrieve safe diagnostic system metadata (Admin Only).
+    Returns environment and component architectural metadata without exposing secrets, credentials, or internal stack traces.
+    """
+    permission_classes = [permissions.IsAuthenticated, permissions.IsAdminUser]
+    serializer_class = SystemStatusSerializer
+
+    @extend_schema(request=None, responses={200: SystemStatusSerializer})
+    def get(self, request):
+        data = {
+            "application": "TradeFlow",
+            "environment": "production",
+            "database": "PostgreSQL",
+            "cache": "Redis",
+            "websocket": "Django Channels",
+            "api_version": "v1"
+        }
+        serializer = SystemStatusSerializer(data)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+
 
 
 

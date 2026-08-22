@@ -145,6 +145,14 @@ TradeFlow is a digital freight marketplace and logistics optimization platform c
 | `GET` | `/api/v1/operations/automation/` | Phase 13 workflow recommendation status & execution metrics | Authenticated User |
 | `GET` | `/api/v1/operations/shipments/{id}/summary/` | Unified single-shipment operational summary combining all Phase 9-14 intelligence | Shipment Participant / Admin |
 
+### 13. Production Reliability, Observability & Resilience (`/api/v1/system/`)
+| Method | Endpoint | Description | Auth / Role Required |
+| :--- | :--- | :--- | :--- |
+| `GET` | `/api/v1/system/health/` | Retrieve API process liveness status | Public / Operational Probing |
+| `GET` | `/api/v1/system/readiness/` | Retrieve PostgreSQL database and Redis dependency readiness status | Public / Operational Probing |
+| `GET` | `/api/v1/system/metrics/` | Retrieve internal operational reliability metrics (request rates, error rates, dependency failures, WS stats) | Admin Only |
+| `GET` | `/api/v1/system/status/` | Retrieve safe architectural metadata without exposing secrets or credentials | Admin Only |
+
 ---
 
 ## Business & Security Rules
@@ -164,6 +172,8 @@ TradeFlow is a digital freight marketplace and logistics optimization platform c
 - **Automated Workflow & Human-in-the-Loop Smart Operations**: Evaluates active operational rules across Phase 9-12 data sources and generates structured workflow recommendations (`REVIEW_SHIPMENT`, `CONTACT_DRIVER`, `RECALCULATE_ROUTE`, `REVIEW_INCIDENT`, `REVIEW_PRICING`, `ESCALATE_TO_ADMIN`). Strictly enforces human-in-the-loop authorization (`PENDING` -> `APPROVED` / `REJECTED` -> `EXECUTED`). Duplicate pending recommendations are prevented per rule/shipment. Evaluation NEVER mutates business state without explicit user approval.
 - **Real-Time Operations, Notifications & Event Intelligence**: Persists immutable, deduplicated operational events across all operational triggers, resolves authorized recipients, applies granular delivery preferences with critical severity overrides, and pushes real-time WebSocket payloads via Django Channels & Redis (`/ws/notifications/`, `/ws/shipments/{shipment_id}/events/`). All WebSocket streams require JWT token authentication. Real-time notifications and events NEVER mutate core business state.
 - **Operational Command Center & Management Dashboard Intelligence**: Aggregates operational health, risk distribution, alert trends, driver incidents, route telemetry, market pressure, and automation workflow metrics into a unified decision-support command center (`/api/v1/operations/`, `/ws/operations/`). Strict read-only decision support with participant role isolation (Admins see system-wide metrics; Shippers/Transporters/Drivers see authorized shipment operational data). Command center aggregations NEVER execute autonomous business actions.
+- **Production Reliability, Observability & Resilience**: Enforces sanitized request correlation IDs (`X-Request-ID`), structured logging, request duration tracking (`duration_ms`), slow operation alerts (>=500ms), and DRF error handling (`tradeflow_custom_exception_handler`). Provides `GET /api/v1/system/health/`, `GET /api/v1/system/readiness/`, `GET /api/v1/system/metrics/`, and `GET /api/v1/system/status/`. Redis failure triggers deterministic fallback calculation without failing command center endpoints. Observability metrics and health probes NEVER mutate core business state.
+
 
 
 ---

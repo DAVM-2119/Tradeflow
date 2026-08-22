@@ -89,7 +89,12 @@ from apps.marketplace.views import (
     OperationalMarketIntelligenceAPIView,
     OperationalAutomationIntelligenceAPIView,
     ShipmentOperationalSummaryAPIView,
+    HealthCheckAPIView,
+    ReadinessCheckAPIView,
+    SystemMetricsAPIView,
+    SystemStatusAPIView,
 )
+
 
 
 urlpatterns = [
@@ -204,7 +209,14 @@ urlpatterns = [
     path('operations/automation/', OperationalAutomationIntelligenceAPIView.as_view(), name='operations-automation'),
     path('operations/shipments/<int:shipment_id>/summary/', ShipmentOperationalSummaryAPIView.as_view(), name='operations-shipment-summary'),
 
+    # Phase 16: Production Reliability, Observability & Resilience
+    path('system/health/', HealthCheckAPIView.as_view(), name='system-health'),
+    path('system/readiness/', ReadinessCheckAPIView.as_view(), name='system-readiness'),
+    path('system/metrics/', SystemMetricsAPIView.as_view(), name='system-metrics'),
+    path('system/status/', SystemStatusAPIView.as_view(), name='system-status'),
+
     # Ratings
     path('ratings/', RatingListCreateView.as_view(), name='rating-list-create'),
 ]
+
 

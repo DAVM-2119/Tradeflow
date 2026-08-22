@@ -32,8 +32,11 @@ class UserNotificationConsumer(AsyncWebsocketConsumer):
 
         if not self.user or not self.user.is_authenticated:
             logger.warning("Unauthenticated WebSocket connection attempt to /ws/notifications/ rejected.")
+            from apps.marketplace.observability import OperationalMetricsService
+            OperationalMetricsService.record_websocket_auth_failure()
             await self.close(code=4001)
             return
+
 
         self.group_name = f"notifications.user.{self.user.id}"
 
@@ -79,6 +82,8 @@ class ShipmentEventConsumer(AsyncWebsocketConsumer):
 
         if not self.user or not self.user.is_authenticated:
             logger.warning("Unauthenticated WebSocket connection attempt to shipment events rejected.")
+            from apps.marketplace.observability import OperationalMetricsService
+            OperationalMetricsService.record_websocket_auth_failure()
             await self.close(code=4001)
             return
 
@@ -90,6 +95,7 @@ class ShipmentEventConsumer(AsyncWebsocketConsumer):
             logger.warning(f"User #{self.user.id} denied unauthorized WebSocket access to shipment #{self.shipment_id} events.")
             await self.close(code=4003)
             return
+
 
         self.group_name = f"shipments.{self.shipment_id}.events"
 
@@ -135,8 +141,11 @@ class CommandCenterConsumer(AsyncWebsocketConsumer):
 
         if not self.user or not self.user.is_authenticated:
             logger.warning("Unauthenticated WebSocket connection attempt to /ws/operations/ rejected.")
+            from apps.marketplace.observability import OperationalMetricsService
+            OperationalMetricsService.record_websocket_auth_failure()
             await self.close(code=4001)
             return
+
 
         self.group_name = f"operations.user.{self.user.id}"
 
