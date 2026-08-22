@@ -78,7 +78,19 @@ from apps.marketplace.views import (
     ShipmentEventListAPIView,
     EventDetailAPIView,
     NotificationPreferenceAPIView,
+    OperationalDashboardAPIView,
+    OperationalHealthAPIView,
+    OperationalAttentionQueueAPIView,
+    OperationalAlertIntelligenceAPIView,
+    OperationalAlertTrendsAPIView,
+    OperationalRiskDistributionAPIView,
+    OperationalIncidentIntelligenceAPIView,
+    OperationalTelemetryIntelligenceAPIView,
+    OperationalMarketIntelligenceAPIView,
+    OperationalAutomationIntelligenceAPIView,
+    ShipmentOperationalSummaryAPIView,
 )
+
 
 urlpatterns = [
     # Transporters & Fleet
@@ -179,6 +191,20 @@ urlpatterns = [
     path('events/<int:pk>/', EventDetailAPIView.as_view(), name='event-detail'),
     path('notification-preferences/', NotificationPreferenceAPIView.as_view(), name='notification-preferences'),
 
+    # Phase 15: Operational Command Center, Alert Intelligence & Management Dashboard
+    path('operations/dashboard/', OperationalDashboardAPIView.as_view(), name='operations-dashboard'),
+    path('operations/health/', OperationalHealthAPIView.as_view(), name='operations-health'),
+    path('operations/attention/', OperationalAttentionQueueAPIView.as_view(), name='operations-attention'),
+    path('operations/alerts/', OperationalAlertIntelligenceAPIView.as_view(), name='operations-alerts'),
+    path('operations/alerts/trends/', OperationalAlertTrendsAPIView.as_view(), name='operations-alerts-trends'),
+    path('operations/risk-distribution/', OperationalRiskDistributionAPIView.as_view(), name='operations-risk-distribution'),
+    path('operations/incidents/', OperationalIncidentIntelligenceAPIView.as_view(), name='operations-incidents'),
+    path('operations/telemetry/', OperationalTelemetryIntelligenceAPIView.as_view(), name='operations-telemetry'),
+    path('operations/market/', OperationalMarketIntelligenceAPIView.as_view(), name='operations-market'),
+    path('operations/automation/', OperationalAutomationIntelligenceAPIView.as_view(), name='operations-automation'),
+    path('operations/shipments/<int:shipment_id>/summary/', ShipmentOperationalSummaryAPIView.as_view(), name='operations-shipment-summary'),
+
     # Ratings
     path('ratings/', RatingListCreateView.as_view(), name='rating-list-create'),
 ]
+

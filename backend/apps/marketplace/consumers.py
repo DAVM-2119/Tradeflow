@@ -122,3 +122,64 @@ class ShipmentEventConsumer(AsyncWebsocketConsumer):
         Handler pushing real-time shipment event to client.
         """
         await self.send(text_data=json.dumps(event.get('event', {})))
+
+
+class CommandCenterConsumer(AsyncWebsocketConsumer):
+    """
+    WebSocket consumer for real-time operational command center streams (/ws/operations/).
+    Pushes real-time dashboard alerts and operational health updates to authorized users.
+    """
+
+    async def connect(self):
+        self.user = self.scope.get('user')
+
+        if not self.user or not self.user.is_authenticated:
+            logger.warning("Unauthenticated WebSocket connection attempt to /ws/operations/ rejected.")
+            await self.close(code=4001)
+            return
+
+        self.group_name = f"operations.user.{self.user.id}"
+
+        # Join personal user command center channel group
+        await self.channel_layer.group_add(
+            self.group_name,
+            self.channel_name
+        )
+
+        # Global stream for admins
+        if self.user.is_superuser or self.user.role == Role.ADMIN:
+            await self.channel_layer.group_add(
+                "operations.global",
+                self.channel_name
+            )
+
+        await self.accept()
+        logger.info(f"User #{self.user.id} connected to command center WebSocket stream.")
+
+    async def disconnect(self, close_code):
+        if hasattr(self, 'group_name'):
+            await self.channel_layer.group_discard(
+                self.group_name,
+                self.channel_name
+            )
+        if self.user and (self.user.is_superuser or getattr(self.user, 'role', None) == Role.ADMIN):
+            await self.channel_layer.group_discard(
+                "operations.global",
+                self.channel_name
+            )
+
+    async def receive(self, text_data=None, bytes_data=None):
+        if text_data:
+            try:
+                data = json.loads(text_data)
+                if data.get('type') == 'ping':
+                    await self.send(text_data=json.dumps({"type": "pong"}))
+            except Exception:
+                pass
+
+    async def command_center_update(self, event):
+        """
+        Handler pushing real-time command center update payload to client.
+        """
+        await self.send(text_data=json.dumps(event.get('payload', {})))
+

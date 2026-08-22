@@ -1522,6 +1522,178 @@ class NotificationPreferenceAPIView(generics.RetrieveUpdateAPIView):
         return pref
 
 
+# ============================================================================
+# PHASE 15: OPERATIONAL COMMAND CENTER & ALERT INTELLIGENCE (SRS 2.4, 4.1)
+# ============================================================================
+
+from apps.marketplace.command_center_services import OperationalCommandCenterService
+from apps.marketplace.command_center_serializers import (
+    OperationalDashboardSerializer, OperationalHealthSerializer, OperationalAttentionItemSerializer,
+    OperationalAlertSerializer, OperationalTrendSerializer, OperationalRiskDistributionSerializer,
+    OperationalIncidentSummarySerializer, OperationalTelemetrySummarySerializer,
+    OperationalMarketSummarySerializer, OperationalAutomationSummarySerializer,
+    ShipmentOperationalSummarySerializer
+)
+
+
+class OperationalDashboardAPIView(APIView):
+    """
+    GET: Retrieve real-time operational command center dashboard summary.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = OperationalDashboardSerializer
+
+    @extend_schema(request=None, responses={200: OperationalDashboardSerializer})
+    def get(self, request):
+        data = OperationalCommandCenterService.get_realtime_summary(request.user)
+        serializer = OperationalDashboardSerializer(data)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class OperationalHealthAPIView(APIView):
+    """
+    GET: Retrieve transparent, deterministic operational health score (0-100) and factor breakdown.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = OperationalHealthSerializer
+
+    @extend_schema(request=None, responses={200: OperationalHealthSerializer})
+    def get(self, request):
+        data = OperationalCommandCenterService.calculate_operational_health_score(request.user)
+        serializer = OperationalHealthSerializer(data)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class OperationalAttentionQueueAPIView(APIView):
+    """
+    GET: Retrieve ranked shipment attention queue requiring operational review.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = OperationalAttentionItemSerializer
+
+    @extend_schema(request=None, responses={200: OperationalAttentionItemSerializer(many=True)})
+    def get(self, request):
+        data = OperationalCommandCenterService.get_shipments_requiring_attention(request.user)
+        serializer = OperationalAttentionItemSerializer(data, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class OperationalAlertIntelligenceAPIView(APIView):
+    """
+    GET: Retrieve aggregated operational alert intelligence and notification breakdowns.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = OperationalAlertSerializer
+
+    @extend_schema(request=None, responses={200: OperationalAlertSerializer})
+    def get(self, request):
+        data = OperationalCommandCenterService.get_alert_intelligence(request.user)
+        serializer = OperationalAlertSerializer(data)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class OperationalAlertTrendsAPIView(APIView):
+    """
+    GET: Retrieve time-bucketed operational alert trend analysis (1h, 6h, 24h, 7d, 30d).
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = OperationalTrendSerializer
+
+    @extend_schema(request=None, responses={200: OperationalTrendSerializer})
+    def get(self, request):
+        time_window = request.query_params.get('time_window', '24h')
+        data = OperationalCommandCenterService.get_alert_trends(request.user, time_window=time_window)
+        serializer = OperationalTrendSerializer(data)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class OperationalRiskDistributionAPIView(APIView):
+    """
+    GET: Retrieve operational risk distribution counts and percentages.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = OperationalRiskDistributionSerializer
+
+    @extend_schema(request=None, responses={200: OperationalRiskDistributionSerializer})
+    def get(self, request):
+        data = OperationalCommandCenterService.get_risk_distribution(request.user)
+        serializer = OperationalRiskDistributionSerializer(data)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class OperationalIncidentIntelligenceAPIView(APIView):
+    """
+    GET: Retrieve aggregated driver incident intelligence.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = OperationalIncidentSummarySerializer
+
+    @extend_schema(request=None, responses={200: OperationalIncidentSummarySerializer})
+    def get(self, request):
+        data = OperationalCommandCenterService.get_incident_intelligence(request.user)
+        serializer = OperationalIncidentSummarySerializer(data)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class OperationalTelemetryIntelligenceAPIView(APIView):
+    """
+    GET: Retrieve route deviation and GPS telemetry intelligence.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = OperationalTelemetrySummarySerializer
+
+    @extend_schema(request=None, responses={200: OperationalTelemetrySummarySerializer})
+    def get(self, request):
+        data = OperationalCommandCenterService.get_route_telemetry_intelligence(request.user)
+        serializer = OperationalTelemetrySummarySerializer(data)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class OperationalMarketIntelligenceAPIView(APIView):
+    """
+    GET: Retrieve market pressure and dynamic pricing operational intelligence.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = OperationalMarketSummarySerializer
+
+    @extend_schema(request=None, responses={200: OperationalMarketSummarySerializer})
+    def get(self, request):
+        data = OperationalCommandCenterService.get_market_pricing_intelligence(request.user)
+        serializer = OperationalMarketSummarySerializer(data)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class OperationalAutomationIntelligenceAPIView(APIView):
+    """
+    GET: Retrieve automation workflow recommendations and execution operational intelligence.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = OperationalAutomationSummarySerializer
+
+    @extend_schema(request=None, responses={200: OperationalAutomationSummarySerializer})
+    def get(self, request):
+        data = OperationalCommandCenterService.get_automation_workflow_intelligence(request.user)
+        serializer = OperationalAutomationSummarySerializer(data)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class ShipmentOperationalSummaryAPIView(APIView):
+    """
+    GET: Retrieve unified operational summary for a specific shipment combining all Phase 9-14 intelligence.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = ShipmentOperationalSummarySerializer
+
+    @extend_schema(request=None, responses={200: ShipmentOperationalSummarySerializer})
+    def get(self, request, shipment_id):
+        data = OperationalCommandCenterService.get_unified_shipment_operational_summary(shipment_id, request.user)
+        if not data:
+            return Response({"detail": "Shipment not found or access denied."}, status=status.HTTP_404_NOT_FOUND)
+        serializer = ShipmentOperationalSummarySerializer(data)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+
 
 
 
