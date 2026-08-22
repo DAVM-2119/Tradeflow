@@ -285,4 +285,43 @@ class PricingMarketSnapshotAdmin(admin.ModelAdmin):
     readonly_fields = ('snapshot_at', 'created_at')
 
 
+# ============================================================================
+# PHASE 18: EXTERNAL INTEGRATIONS & WEBHOOKS ADMIN REGISTRATIONS
+# ============================================================================
+from apps.marketplace.models import ExternalIntegration, WebhookEndpoint, WebhookDelivery, InboundWebhookEvent
+
+
+@admin.register(ExternalIntegration)
+class ExternalIntegrationAdmin(admin.ModelAdmin):
+    list_display = ('name', 'integration_type', 'status', 'base_url', 'created_by', 'last_success_at', 'last_failure_at', 'created_at')
+    list_filter = ('integration_type', 'status', 'created_at')
+    search_fields = ('name', 'base_url', 'created_by__email')
+    readonly_fields = ('created_at', 'updated_at', 'last_success_at', 'last_failure_at')
+
+
+@admin.register(WebhookEndpoint)
+class WebhookEndpointAdmin(admin.ModelAdmin):
+    list_display = ('name', 'integration', 'url', 'is_active', 'created_at')
+    list_filter = ('is_active', 'created_at')
+    search_fields = ('name', 'url', 'integration__name')
+    readonly_fields = ('created_at', 'updated_at')
+
+
+@admin.register(WebhookDelivery)
+class WebhookDeliveryAdmin(admin.ModelAdmin):
+    list_display = ('id', 'webhook_endpoint', 'event_type', 'status', 'attempt_count', 'max_attempts', 'response_status', 'created_at', 'delivered_at')
+    list_filter = ('status', 'event_type', 'created_at')
+    search_fields = ('event_type', 'idempotency_key', 'webhook_endpoint__name', 'webhook_endpoint__url')
+    readonly_fields = ('webhook_endpoint', 'event_type', 'payload', 'idempotency_key', 'status', 'attempt_count', 'max_attempts', 'last_attempt_at', 'next_retry_at', 'response_status', 'response_body', 'error_message', 'created_at', 'updated_at', 'delivered_at')
+
+
+@admin.register(InboundWebhookEvent)
+class InboundWebhookEventAdmin(admin.ModelAdmin):
+    list_display = ('id', 'integration', 'event_type', 'external_event_id', 'signature_valid', 'processing_status', 'received_at', 'processed_at')
+    list_filter = ('signature_valid', 'processing_status', 'event_type', 'received_at')
+    search_fields = ('event_type', 'external_event_id', 'idempotency_key', 'integration__name')
+    readonly_fields = ('integration', 'event_type', 'external_event_id', 'payload', 'signature_valid', 'processing_status', 'idempotency_key', 'received_at', 'processed_at', 'error_message')
+
+
+
 

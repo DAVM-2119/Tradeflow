@@ -107,7 +107,24 @@ from apps.marketplace.views import (
     AnalyticsTopPerformersAPIView,
     AnalyticsTrendsAPIView,
     AnalyticsReportsAPIView,
+    ExternalIntegrationListCreateAPIView,
+    ExternalIntegrationDetailAPIView,
+    ExternalIntegrationActivateAPIView,
+    ExternalIntegrationDeactivateAPIView,
+    ExternalIntegrationHealthAPIView,
+    WebhookEndpointListCreateAPIView,
+    WebhookEndpointDetailAPIView,
+    WebhookEndpointActivateAPIView,
+    WebhookEndpointDeactivateAPIView,
+    WebhookEndpointRotateSecretAPIView,
+    IntegrationDeliveriesListAPIView,
+    WebhookEndpointDeliveriesListAPIView,
+    WebhookDeliveryDetailAPIView,
+    WebhookDeliveryRetryAPIView,
+    IntegrationEventPublishAPIView,
+    InboundWebhookReceiverAPIView,
 )
+
 
 
 
@@ -246,9 +263,28 @@ urlpatterns = [
     path('analytics/trends/', AnalyticsTrendsAPIView.as_view(), name='analytics-trends'),
     path('analytics/reports/<str:report_type>/', AnalyticsReportsAPIView.as_view(), name='analytics-reports'),
 
+    # Phase 18: External Integrations, Webhooks & Enterprise Data Exchange
+    path('integrations/', ExternalIntegrationListCreateAPIView.as_view(), name='integration-list-create'),
+    path('integrations/<int:pk>/', ExternalIntegrationDetailAPIView.as_view(), name='integration-detail'),
+    path('integrations/<int:pk>/activate/', ExternalIntegrationActivateAPIView.as_view(), name='integration-activate'),
+    path('integrations/<int:pk>/deactivate/', ExternalIntegrationDeactivateAPIView.as_view(), name='integration-deactivate'),
+    path('integrations/<int:pk>/health/', ExternalIntegrationHealthAPIView.as_view(), name='integration-health'),
+    path('integrations/<int:pk>/webhooks/', WebhookEndpointListCreateAPIView.as_view(), name='integration-webhook-list-create'),
+    path('webhooks/<int:pk>/', WebhookEndpointDetailAPIView.as_view(), name='webhook-endpoint-detail'),
+    path('webhooks/<int:pk>/activate/', WebhookEndpointActivateAPIView.as_view(), name='webhook-endpoint-activate'),
+    path('webhooks/<int:pk>/deactivate/', WebhookEndpointDeactivateAPIView.as_view(), name='webhook-endpoint-deactivate'),
+    path('webhooks/<int:pk>/rotate-secret/', WebhookEndpointRotateSecretAPIView.as_view(), name='webhook-endpoint-rotate-secret'),
+    path('integrations/<int:pk>/deliveries/', IntegrationDeliveriesListAPIView.as_view(), name='integration-deliveries-list'),
+    path('webhooks/<int:pk>/deliveries/', WebhookEndpointDeliveriesListAPIView.as_view(), name='webhook-endpoint-deliveries-list'),
+    path('webhook-deliveries/<int:pk>/', WebhookDeliveryDetailAPIView.as_view(), name='webhook-delivery-detail'),
+    path('webhook-deliveries/<int:pk>/retry/', WebhookDeliveryRetryAPIView.as_view(), name='webhook-delivery-retry'),
+    path('integrations/events/publish/', IntegrationEventPublishAPIView.as_view(), name='integration-event-publish'),
+    path('webhooks/inbound/<int:integration_id>/', InboundWebhookReceiverAPIView.as_view(), name='inbound-webhook-receiver'),
+
     # Ratings
     path('ratings/', RatingListCreateView.as_view(), name='rating-list-create'),
 ]
+
 
 
 

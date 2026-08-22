@@ -1534,5 +1534,192 @@ class NotificationPreference(models.Model):
         return f"Preferences for {self.user.email}"
 
 
+# ============================================================================
+# PHASE 18: EXTERNAL INTEGRATIONS, WEBHOOKS & ENTERPRISE DATA EXCHANGE MODELS
+# ============================================================================
+
+class IntegrationType(models.TextChoices):
+    ERP = 'ERP', 'Enterprise Resource Planning'
+    ACCOUNTING = 'ACCOUNTING', 'Accounting & Financial System'
+    LOGISTICS = 'LOGISTICS', 'Logistics Platform'
+    TRACKING = 'TRACKING', 'Telematics & Tracking Service'
+    ANALYTICS = 'ANALYTICS', 'Enterprise Analytics System'
+    CUSTOM = 'CUSTOM', 'Custom Webhook Integration'
+
+
+class IntegrationStatus(models.TextChoices):
+    ACTIVE = 'ACTIVE', 'Active'
+    INACTIVE = 'INACTIVE', 'Inactive'
+    DISABLED = 'DISABLED', 'Disabled by System'
+    ERROR = 'ERROR', 'Error / Connection Failed'
+
+
+class ExternalIntegration(models.Model):
+    """
+    Configured connection between TradeFlow and an external enterprise system.
+    """
+    name = models.CharField(max_length=255)
+    integration_type = models.CharField(max_length=30, choices=IntegrationType.choices, default=IntegrationType.CUSTOM, db_index=True)
+    status = models.CharField(max_length=20, choices=IntegrationStatus.choices, default=IntegrationStatus.ACTIVE, db_index=True)
+    base_url = models.URLField(max_length=500, blank=True)
+    webhook_secret = models.CharField(max_length=255, blank=True)
+    api_key_reference = models.CharField(max_length=255, blank=True)
+    configuration = models.JSONField(default=dict, blank=True)
+
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='created_integrations'
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    last_success_at = models.DateTimeField(null=True, blank=True)
+    last_failure_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        verbose_name = 'External Integration'
+        verbose_name_plural = 'External Integrations'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.name} ({self.integration_type}) - {self.status}"
+
+
+class WebhookEndpoint(models.Model):
+    """
+    Configured HTTP URL endpoint for publishing TradeFlow operational events.
+    """
+    integration = models.ForeignKey(
+        ExternalIntegration,
+        on_delete=models.CASCADE,
+        related_name='webhook_endpoints'
+    )
+    name = models.CharField(max_length=255)
+    url = models.URLField(max_length=500)
+    event_types = models.JSONField(default=list, help_text="List of subscribed event type strings")
+    is_active = models.BooleanField(default=True, db_index=True)
+    secret = models.CharField(max_length=255, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Webhook Endpoint'
+        verbose_name_plural = 'Webhook Endpoints'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"Webhook '{self.name}' ({self.integration.name}) -> {self.url}"
+
+
+class WebhookDeliveryStatus(models.TextChoices):
+    PENDING = 'PENDING', 'Pending Delivery'
+    PROCESSING = 'PROCESSING', 'Processing HTTP Request'
+    DELIVERED = 'DELIVERED', 'Delivered Successfully'
+    FAILED = 'FAILED', 'Delivery Failed'
+    RETRYING = 'RETRYING', 'Retrying Delivery'
+    CANCELLED = 'CANCELLED', 'Cancelled'
+
+
+class WebhookDelivery(models.Model):
+    """
+    Record of outbound HTTP event delivery attempt to an external webhook endpoint.
+    """
+    webhook_endpoint = models.ForeignKey(
+        WebhookEndpoint,
+        on_delete=models.CASCADE,
+        related_name='deliveries'
+    )
+    event_type = models.CharField(max_length=100, db_index=True)
+    payload = models.JSONField(default=dict)
+    idempotency_key = models.CharField(max_length=255, db_index=True)
+
+    status = models.CharField(max_length=20, choices=WebhookDeliveryStatus.choices, default=WebhookDeliveryStatus.PENDING, db_index=True)
+
+    attempt_count = models.PositiveIntegerField(default=0)
+    max_attempts = models.PositiveIntegerField(default=5)
+
+    last_attempt_at = models.DateTimeField(null=True, blank=True)
+    next_retry_at = models.DateTimeField(null=True, blank=True, db_index=True)
+
+    response_status = models.PositiveIntegerField(null=True, blank=True)
+    response_body = models.TextField(blank=True, help_text="Truncated response body (max 2000 chars)")
+
+    error_message = models.TextField(blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    delivered_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        verbose_name = 'Webhook Delivery'
+        verbose_name_plural = 'Webhook Deliveries'
+        ordering = ['-created_at']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['webhook_endpoint', 'idempotency_key'],
+                name='unique_endpoint_idempotency_delivery'
+            )
+        ]
+        indexes = [
+            models.Index(fields=['webhook_endpoint', 'status']),
+            models.Index(fields=['status', 'next_retry_at']),
+        ]
+
+    def __str__(self):
+        return f"Delivery #{self.id} ({self.event_type}) -> {self.status} (Attempts: {self.attempt_count}/{self.max_attempts})"
+
+
+class InboundWebhookStatus(models.TextChoices):
+    RECEIVED = 'RECEIVED', 'Received'
+    PROCESSING = 'PROCESSING', 'Processing'
+    PROCESSED = 'PROCESSED', 'Processed Successfully'
+    FAILED = 'FAILED', 'Processing Failed'
+    REJECTED = 'REJECTED', 'Signature / Format Rejected'
+    DUPLICATE = 'DUPLICATE', 'Duplicate Event Ignored'
+
+
+class InboundWebhookEvent(models.Model):
+    """
+    Log of inbound webhook events received from external enterprise systems.
+    """
+    integration = models.ForeignKey(
+        ExternalIntegration,
+        on_delete=models.CASCADE,
+        related_name='inbound_events'
+    )
+    event_type = models.CharField(max_length=100, db_index=True)
+    external_event_id = models.CharField(max_length=255, db_index=True)
+
+    payload = models.JSONField(default=dict)
+
+    signature_valid = models.BooleanField(default=False)
+    processing_status = models.CharField(max_length=20, choices=InboundWebhookStatus.choices, default=InboundWebhookStatus.RECEIVED, db_index=True)
+
+    idempotency_key = models.CharField(max_length=255, db_index=True)
+
+    received_at = models.DateTimeField(auto_now_add=True)
+    processed_at = models.DateTimeField(null=True, blank=True)
+
+    error_message = models.TextField(blank=True)
+
+    class Meta:
+        verbose_name = 'Inbound Webhook Event'
+        verbose_name_plural = 'Inbound Webhook Events'
+        ordering = ['-received_at']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['integration', 'external_event_id'],
+                name='unique_integration_external_event'
+            )
+        ]
+
+    def __str__(self):
+        return f"Inbound #{self.id} ({self.event_type}) from {self.integration.name} -> {self.processing_status}"
+
+
+
 
 

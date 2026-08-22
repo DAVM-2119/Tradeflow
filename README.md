@@ -171,6 +171,30 @@ TradeFlow is a digital freight marketplace and logistics optimization platform c
 | `GET` | `/api/v1/analytics/trends/` | Time-series bucketed trend analysis (`shipments`, `incidents`, `risk`, `revenue`, `automation`, `events`) | Authenticated / Scoped |
 | `GET` | `/api/v1/analytics/reports/{type}/` | Dynamic report generation (`executive`, `operational`, `financial`, `risk`, `market`, `automation`) in JSON & CSV | Authenticated / Scoped |
 
+### 15. External Integrations, Webhooks & Enterprise Data Exchange (`/api/v1/integrations/`, `/api/v1/webhooks/`)
+| Method | Endpoint | Description | Auth / Role Required |
+| :--- | :--- | :--- | :--- |
+| `GET` | `/api/v1/integrations/` | List configured external enterprise integrations | Admin Only |
+| `POST` | `/api/v1/integrations/` | Create a new external enterprise integration | Admin Only |
+| `GET` | `/api/v1/integrations/{id}/` | Retrieve external integration configuration details | Admin Only |
+| `PATCH` | `/api/v1/integrations/{id}/` | Update external integration parameters | Admin Only |
+| `POST` | `/api/v1/integrations/{id}/activate/` | Activate external integration | Admin Only |
+| `POST` | `/api/v1/integrations/{id}/deactivate/` | Deactivate external integration | Admin Only |
+| `GET` | `/api/v1/integrations/{id}/health/` | Retrieve integration delivery health, success rate, and endpoint status | Admin Only |
+| `GET` | `/api/v1/integrations/{id}/webhooks/` | List webhook endpoints for an integration | Admin Only |
+| `POST` | `/api/v1/integrations/{id}/webhooks/` | Create a new webhook endpoint for an integration | Admin Only |
+| `GET` | `/api/v1/webhooks/{id}/` | Retrieve webhook endpoint details | Admin Only |
+| `PATCH` | `/api/v1/webhooks/{id}/` | Update webhook endpoint configuration | Admin Only |
+| `POST` | `/api/v1/webhooks/{id}/activate/` | Activate webhook endpoint | Admin Only |
+| `POST` | `/api/v1/webhooks/{id}/deactivate/` | Deactivate webhook endpoint | Admin Only |
+| `POST` | `/api/v1/webhooks/{id}/rotate-secret/` | Rotate HMAC signing secret for a webhook endpoint | Admin Only |
+| `GET` | `/api/v1/integrations/{id}/deliveries/` | List outbound webhook delivery attempts for an integration | Admin Only |
+| `GET` | `/api/v1/webhooks/{id}/deliveries/` | List outbound webhook delivery attempts for an endpoint | Admin Only |
+| `GET` | `/api/v1/webhook-deliveries/{id}/` | Retrieve detailed delivery attempt diagnostic context | Admin Only |
+| `POST` | `/api/v1/webhook-deliveries/{id}/retry/` | Manually trigger retry delivery execution | Admin Only |
+| `POST` | `/api/v1/integrations/events/publish/` | Publish operational event to external webhook subscribers | Admin Only |
+| `POST` | `/api/v1/webhooks/inbound/{integration_id}/` | Ingest and authenticate inbound enterprise webhooks | Signature Authenticated |
+
 ---
 
 ## Business & Security Rules
@@ -192,6 +216,8 @@ TradeFlow is a digital freight marketplace and logistics optimization platform c
 - **Operational Command Center & Management Dashboard Intelligence**: Aggregates operational health, risk distribution, alert trends, driver incidents, route telemetry, market pressure, and automation workflow metrics into a unified decision-support command center (`/api/v1/operations/`, `/ws/operations/`). Strict read-only decision support with participant role isolation (Admins see system-wide metrics; Shippers/Transporters/Drivers see authorized shipment operational data). Command center aggregations NEVER execute autonomous business actions.
 - **Production Reliability, Observability & Resilience**: Enforces sanitized request correlation IDs (`X-Request-ID`), structured logging, request duration tracking (`duration_ms`), slow operation alerts (>=500ms), and DRF error handling (`tradeflow_custom_exception_handler`). Provides `GET /api/v1/system/health/`, `GET /api/v1/system/readiness/`, `GET /api/v1/system/metrics/`, and `GET /api/v1/system/status/`. Redis failure triggers deterministic fallback calculation without failing command center endpoints. Observability metrics and health probes NEVER mutate core business state.
 - **Analytics, Reporting & Business Intelligence**: Provides read-only executive, shipment, delivery, financial (Decimal-safe), market, risk, incident, route, automation, event, corridor, top performer, and trend analytics (`/api/v1/analytics/`). Enforces participant role isolation (`_get_authorized_shipments_queryset`). Supports dynamic JSON & CSV report exports (`/api/v1/analytics/reports/{type}/`). Redis caching (TTL 60s) with silent fallback to database calculation. Analytics probes NEVER mutate core business state.
+- **External Integrations, Webhooks & Enterprise Data Exchange**: Enables secure, reliable, idempotent integration management, outbound webhook delivery, and inbound event ingestion (`/api/v1/integrations/`, `/api/v1/webhooks/`). Computes HMAC-SHA256 signatures (`X-TradeFlow-Signature`) using endpoint/integration secrets. Propagates `X-Request-ID` correlation headers. Enforces idempotency via unique constraints on `(webhook_endpoint, idempotency_key)` and `(integration, external_event_id)`. Bounded exponential backoff retries (max 5 attempts). Validates URL protocols (`http://`, `https://`). Masks secrets (`********`) in responses. Integration operations NEVER mutate core operational business state.
+
 
 
 

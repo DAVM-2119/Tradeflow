@@ -2025,6 +2025,329 @@ class AnalyticsReportsAPIView(APIView):
         return Response(serializer.data, status=status.HTTP_200_OK)
 
 
+# ============================================================================
+# PHASE 18: EXTERNAL INTEGRATIONS, WEBHOOKS & ENTERPRISE DATA EXCHANGE VIEWS
+# ============================================================================
+from apps.marketplace.models import (
+    ExternalIntegration,
+    WebhookEndpoint,
+    WebhookDelivery,
+    InboundWebhookEvent,
+)
+from apps.marketplace.integration_services import IntegrationService
+from apps.marketplace.integration_serializers import (
+    ExternalIntegrationSerializer,
+    ExternalIntegrationCreateSerializer,
+    ExternalIntegrationUpdateSerializer,
+    WebhookEndpointSerializer,
+    WebhookEndpointCreateSerializer,
+    WebhookDeliverySerializer,
+    WebhookDeliveryDetailSerializer,
+    InboundWebhookEventSerializer,
+    IntegrationHealthSerializer,
+    IntegrationEventPublishSerializer,
+    WebhookRetrySerializer,
+)
+
+
+
+class ExternalIntegrationListCreateAPIView(APIView):
+    """
+    GET: List external integrations (Admin Only).
+    POST: Create new external integration (Admin Only).
+    """
+    permission_classes = [permissions.IsAuthenticated, permissions.IsAdminUser]
+    serializer_class = ExternalIntegrationSerializer
+
+    @extend_schema(request=None, responses={200: ExternalIntegrationSerializer(many=True)})
+    def get(self, request):
+        qs = ExternalIntegration.objects.all()
+        serializer = ExternalIntegrationSerializer(qs, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    @extend_schema(request=ExternalIntegrationCreateSerializer, responses={201: ExternalIntegrationSerializer})
+    def post(self, request):
+        serializer = ExternalIntegrationCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        integration = IntegrationService.create_integration(request.user, serializer.validated_data)
+        res_serializer = ExternalIntegrationSerializer(integration)
+        return Response(res_serializer.data, status=status.HTTP_201_CREATED)
+
+
+class ExternalIntegrationDetailAPIView(APIView):
+    """
+    GET: Retrieve external integration details (Admin Only).
+    PATCH: Update external integration parameters (Admin Only).
+    """
+    permission_classes = [permissions.IsAuthenticated, permissions.IsAdminUser]
+    serializer_class = ExternalIntegrationSerializer
+
+    @extend_schema(request=None, responses={200: ExternalIntegrationSerializer})
+    def get(self, request, pk):
+        integration = ExternalIntegration.objects.filter(id=pk).first()
+        if not integration:
+            return Response({"detail": "External integration not found."}, status=status.HTTP_404_NOT_FOUND)
+        serializer = ExternalIntegrationSerializer(integration)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    @extend_schema(request=ExternalIntegrationUpdateSerializer, responses={200: ExternalIntegrationSerializer})
+    def patch(self, request, pk):
+        serializer = ExternalIntegrationUpdateSerializer(data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        integration = IntegrationService.update_integration(pk, request.user, serializer.validated_data)
+        res_serializer = ExternalIntegrationSerializer(integration)
+        return Response(res_serializer.data, status=status.HTTP_200_OK)
+
+
+class ExternalIntegrationActivateAPIView(APIView):
+    """
+    POST: Activate an external integration (Admin Only).
+    """
+    permission_classes = [permissions.IsAuthenticated, permissions.IsAdminUser]
+    serializer_class = ExternalIntegrationSerializer
+
+    @extend_schema(request=None, responses={200: ExternalIntegrationSerializer})
+    def post(self, request, pk):
+        integration = IntegrationService.activate_integration(pk, request.user)
+        serializer = ExternalIntegrationSerializer(integration)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class ExternalIntegrationDeactivateAPIView(APIView):
+    """
+    POST: Deactivate an external integration (Admin Only).
+    """
+    permission_classes = [permissions.IsAuthenticated, permissions.IsAdminUser]
+    serializer_class = ExternalIntegrationSerializer
+
+    @extend_schema(request=None, responses={200: ExternalIntegrationSerializer})
+    def post(self, request, pk):
+        integration = IntegrationService.deactivate_integration(pk, request.user)
+        serializer = ExternalIntegrationSerializer(integration)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class ExternalIntegrationHealthAPIView(APIView):
+    """
+    GET: Retrieve integration delivery health, success rate, and endpoint status (Admin Only).
+    """
+    permission_classes = [permissions.IsAuthenticated, permissions.IsAdminUser]
+    serializer_class = IntegrationHealthSerializer
+
+    @extend_schema(request=None, responses={200: IntegrationHealthSerializer})
+    def get(self, request, pk):
+        health_data = IntegrationService.get_integration_health(pk)
+        serializer = IntegrationHealthSerializer(health_data)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class WebhookEndpointListCreateAPIView(APIView):
+    """
+    GET: List webhook endpoints for an integration (Admin Only).
+    POST: Create a new webhook endpoint for an integration (Admin Only).
+    """
+    permission_classes = [permissions.IsAuthenticated, permissions.IsAdminUser]
+    serializer_class = WebhookEndpointSerializer
+
+    @extend_schema(request=None, responses={200: WebhookEndpointSerializer(many=True)})
+    def get(self, request, pk):
+        qs = WebhookEndpoint.objects.filter(integration_id=pk)
+        serializer = WebhookEndpointSerializer(qs, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    @extend_schema(request=WebhookEndpointCreateSerializer, responses={201: WebhookEndpointSerializer})
+    def post(self, request, pk):
+        data = request.data.copy()
+        data['integration'] = pk
+        serializer = WebhookEndpointCreateSerializer(data=data)
+        serializer.is_valid(raise_exception=True)
+        endpoint = IntegrationService.create_webhook_endpoint(pk, request.user, serializer.validated_data)
+        res_serializer = WebhookEndpointSerializer(endpoint)
+        return Response(res_serializer.data, status=status.HTTP_201_CREATED)
+
+
+class WebhookEndpointDetailAPIView(APIView):
+    """
+    GET: Retrieve webhook endpoint details (Admin Only).
+    PATCH: Update webhook endpoint parameters (Admin Only).
+    """
+    permission_classes = [permissions.IsAuthenticated, permissions.IsAdminUser]
+    serializer_class = WebhookEndpointSerializer
+
+    @extend_schema(request=None, responses={200: WebhookEndpointSerializer})
+    def get(self, request, pk):
+        endpoint = WebhookEndpoint.objects.filter(id=pk).first()
+        if not endpoint:
+            return Response({"detail": "Webhook endpoint not found."}, status=status.HTTP_404_NOT_FOUND)
+        serializer = WebhookEndpointSerializer(endpoint)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    @extend_schema(request=WebhookEndpointSerializer, responses={200: WebhookEndpointSerializer})
+    def patch(self, request, pk):
+        endpoint = IntegrationService.update_webhook_endpoint(pk, request.user, request.data)
+        serializer = WebhookEndpointSerializer(endpoint)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class WebhookEndpointActivateAPIView(APIView):
+    """
+    POST: Activate a webhook endpoint (Admin Only).
+    """
+    permission_classes = [permissions.IsAuthenticated, permissions.IsAdminUser]
+    serializer_class = WebhookEndpointSerializer
+
+    @extend_schema(request=None, responses={200: WebhookEndpointSerializer})
+    def post(self, request, pk):
+        endpoint = IntegrationService.update_webhook_endpoint(pk, request.user, {'is_active': True})
+        serializer = WebhookEndpointSerializer(endpoint)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class WebhookEndpointDeactivateAPIView(APIView):
+    """
+    POST: Deactivate a webhook endpoint (Admin Only).
+    """
+    permission_classes = [permissions.IsAuthenticated, permissions.IsAdminUser]
+    serializer_class = WebhookEndpointSerializer
+
+    @extend_schema(request=None, responses={200: WebhookEndpointSerializer})
+    def post(self, request, pk):
+        endpoint = IntegrationService.update_webhook_endpoint(pk, request.user, {'is_active': False})
+        serializer = WebhookEndpointSerializer(endpoint)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class WebhookEndpointRotateSecretAPIView(APIView):
+    """
+    POST: Rotate HMAC signing secret for a webhook endpoint (Admin Only).
+    """
+    permission_classes = [permissions.IsAuthenticated, permissions.IsAdminUser]
+    serializer_class = WebhookEndpointSerializer
+
+    @extend_schema(request=None, responses={200: WebhookEndpointSerializer})
+    def post(self, request, pk):
+        endpoint = IntegrationService.rotate_webhook_secret(pk, request.user)
+        serializer = WebhookEndpointSerializer(endpoint)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class IntegrationDeliveriesListAPIView(APIView):
+    """
+    GET: Retrieve outbound webhook delivery attempts for an integration (Admin Only).
+    """
+    permission_classes = [permissions.IsAuthenticated, permissions.IsAdminUser]
+    serializer_class = WebhookDeliverySerializer
+
+    @extend_schema(request=None, responses={200: WebhookDeliverySerializer(many=True)})
+    def get(self, request, pk):
+        qs = WebhookDelivery.objects.filter(webhook_endpoint__integration_id=pk)
+        serializer = WebhookDeliverySerializer(qs, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class WebhookEndpointDeliveriesListAPIView(APIView):
+    """
+    GET: Retrieve outbound webhook delivery attempts for an endpoint (Admin Only).
+    """
+    permission_classes = [permissions.IsAuthenticated, permissions.IsAdminUser]
+    serializer_class = WebhookDeliverySerializer
+
+    @extend_schema(request=None, responses={200: WebhookDeliverySerializer(many=True)})
+    def get(self, request, pk):
+        qs = WebhookDelivery.objects.filter(webhook_endpoint_id=pk)
+        serializer = WebhookDeliverySerializer(qs, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class WebhookDeliveryDetailAPIView(APIView):
+    """
+    GET: Retrieve detailed delivery attempt diagnostic context (Admin Only).
+    """
+    permission_classes = [permissions.IsAuthenticated, permissions.IsAdminUser]
+    serializer_class = WebhookDeliveryDetailSerializer
+
+    @extend_schema(request=None, responses={200: WebhookDeliveryDetailSerializer})
+    def get(self, request, pk):
+        delivery = WebhookDelivery.objects.filter(id=pk).first()
+        if not delivery:
+            return Response({"detail": "Webhook delivery not found."}, status=status.HTTP_404_NOT_FOUND)
+        serializer = WebhookDeliveryDetailSerializer(delivery)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class WebhookDeliveryRetryAPIView(APIView):
+    """
+    POST: Manually trigger retry delivery execution for a failed or retrying webhook delivery (Admin Only).
+    """
+    permission_classes = [permissions.IsAuthenticated, permissions.IsAdminUser]
+    serializer_class = WebhookDeliveryDetailSerializer
+
+    @extend_schema(request=None, responses={200: WebhookDeliveryDetailSerializer})
+    def post(self, request, pk):
+        delivery = IntegrationService.retry_delivery(pk, request.user)
+        serializer = WebhookDeliveryDetailSerializer(delivery)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class IntegrationEventPublishAPIView(APIView):
+    """
+    POST: Publish an operational event to external webhook subscribers (Admin Only).
+    """
+    permission_classes = [permissions.IsAuthenticated, permissions.IsAdminUser]
+    serializer_class = IntegrationEventPublishSerializer
+
+    @extend_schema(request=IntegrationEventPublishSerializer, responses={200: WebhookDeliverySerializer(many=True)})
+    def post(self, request):
+        serializer = IntegrationEventPublishSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        evt_type = serializer.validated_data['event_type']
+        shp_id = serializer.validated_data.get('shipment_id')
+        data = serializer.validated_data.get('data', {})
+
+        deliveries = IntegrationService.publish_event(
+            event_type=evt_type,
+            shipment_id=shp_id,
+            data=data,
+            request_id=getattr(request, 'request_id', None)
+        )
+
+        # Process deliveries
+        processed = []
+        for d in deliveries:
+            res_d = IntegrationService.process_delivery(d.id)
+            processed.append(res_d)
+
+        res_serializer = WebhookDeliverySerializer(processed, many=True)
+        return Response(res_serializer.data, status=status.HTTP_200_OK)
+
+
+class InboundWebhookReceiverAPIView(APIView):
+    """
+    POST: Receive and authenticate inbound webhooks from external enterprise systems via HMAC SHA-256 signatures.
+    """
+    permission_classes = [permissions.AllowAny]
+    serializer_class = InboundWebhookEventSerializer
+
+    @extend_schema(request=None, responses={200: InboundWebhookEventSerializer, 400: None, 401: None})
+    def post(self, request, integration_id):
+        raw_body = request.body.decode('utf-8', errors='ignore')
+        sig = request.headers.get('X-TradeFlow-Signature') or request.headers.get('X-Signature') or ''
+
+        headers = dict(request.headers)
+        evt = IntegrationService.process_inbound_webhook(integration_id, raw_body, sig, headers)
+
+        if not evt.signature_valid:
+            return Response(
+                {"detail": "Invalid HMAC signature or malformed body payload.", "event_id": evt.id},
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+
+        serializer = InboundWebhookEventSerializer(evt)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+
 
 
 
