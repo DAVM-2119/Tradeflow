@@ -93,7 +93,22 @@ from apps.marketplace.views import (
     ReadinessCheckAPIView,
     SystemMetricsAPIView,
     SystemStatusAPIView,
+    AnalyticsDashboardAPIView,
+    AnalyticsShipmentsAPIView,
+    AnalyticsDeliveryPerformanceAPIView,
+    AnalyticsFinancialAPIView,
+    AnalyticsMarketAPIView,
+    AnalyticsRiskAPIView,
+    AnalyticsIncidentAPIView,
+    AnalyticsRouteAPIView,
+    AnalyticsAutomationAPIView,
+    AnalyticsEventAPIView,
+    AnalyticsCorridorAPIView,
+    AnalyticsTopPerformersAPIView,
+    AnalyticsTrendsAPIView,
+    AnalyticsReportsAPIView,
 )
+
 
 
 
@@ -215,8 +230,25 @@ urlpatterns = [
     path('system/metrics/', SystemMetricsAPIView.as_view(), name='system-metrics'),
     path('system/status/', SystemStatusAPIView.as_view(), name='system-status'),
 
+    # Phase 17: Analytics, Reporting & Business Intelligence
+    path('analytics/dashboard/', AnalyticsDashboardAPIView.as_view(), name='analytics-dashboard'),
+    path('analytics/shipments/', AnalyticsShipmentsAPIView.as_view(), name='analytics-shipments'),
+    path('analytics/delivery-performance/', AnalyticsDeliveryPerformanceAPIView.as_view(), name='analytics-delivery-performance'),
+    path('analytics/financial/', AnalyticsFinancialAPIView.as_view(), name='analytics-financial'),
+    path('analytics/market/', AnalyticsMarketAPIView.as_view(), name='analytics-market'),
+    path('analytics/risk/', AnalyticsRiskAPIView.as_view(), name='analytics-risk'),
+    path('analytics/incidents/', AnalyticsIncidentAPIView.as_view(), name='analytics-incidents'),
+    path('analytics/routes/', AnalyticsRouteAPIView.as_view(), name='analytics-routes'),
+    path('analytics/automation/', AnalyticsAutomationAPIView.as_view(), name='analytics-automation'),
+    path('analytics/events/', AnalyticsEventAPIView.as_view(), name='analytics-events'),
+    path('analytics/corridors/', AnalyticsCorridorAPIView.as_view(), name='analytics-corridors'),
+    path('analytics/top-performers/', AnalyticsTopPerformersAPIView.as_view(), name='analytics-top-performers'),
+    path('analytics/trends/', AnalyticsTrendsAPIView.as_view(), name='analytics-trends'),
+    path('analytics/reports/<str:report_type>/', AnalyticsReportsAPIView.as_view(), name='analytics-reports'),
+
     # Ratings
     path('ratings/', RatingListCreateView.as_view(), name='rating-list-create'),
 ]
+
 
 

@@ -1774,6 +1774,258 @@ class SystemStatusAPIView(APIView):
         return Response(serializer.data, status=status.HTTP_200_OK)
 
 
+# ============================================================================
+# PHASE 17: ANALYTICS, REPORTING & BUSINESS INTELLIGENCE VIEWS
+# ============================================================================
+from django.http import HttpResponse
+from apps.marketplace.analytics_services import BusinessIntelligenceService
+from apps.marketplace.analytics_serializers import (
+    AnalyticsFilterSerializer,
+    DashboardOverviewSerializer,
+    ShipmentAnalyticsSerializer,
+    DeliveryPerformanceSerializer,
+    FinancialAnalyticsSerializer,
+    MarketAnalyticsSerializer,
+    RiskAnalyticsSerializer,
+    IncidentAnalyticsSerializer,
+    RouteAnalyticsSerializer,
+    AutomationAnalyticsSerializer,
+    EventAnalyticsSerializer,
+    CorridorAnalyticsSerializer,
+    TopPerformerSerializer,
+    TrendAnalyticsSerializer,
+    GenericReportSerializer,
+)
+
+
+class AnalyticsDashboardAPIView(APIView):
+    """
+    GET: Retrieve unified executive analytics dashboard overview.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = DashboardOverviewSerializer
+
+    @extend_schema(parameters=[AnalyticsFilterSerializer], responses={200: DashboardOverviewSerializer})
+    def get(self, request):
+        filters = request.query_params.dict()
+        data = BusinessIntelligenceService.get_dashboard_overview(request.user, filters)
+        serializer = DashboardOverviewSerializer(data)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class AnalyticsShipmentsAPIView(APIView):
+    """
+    GET: Retrieve shipment lifecycle analytics and status distribution metrics.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = ShipmentAnalyticsSerializer
+
+    @extend_schema(parameters=[AnalyticsFilterSerializer], responses={200: ShipmentAnalyticsSerializer})
+    def get(self, request):
+        filters = request.query_params.dict()
+        data = BusinessIntelligenceService.get_shipment_analytics(request.user, filters)
+        serializer = ShipmentAnalyticsSerializer(data)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class AnalyticsDeliveryPerformanceAPIView(APIView):
+    """
+    GET: Retrieve delivery performance metrics comparing estimated vs actual delivery durations.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = DeliveryPerformanceSerializer
+
+    @extend_schema(parameters=[AnalyticsFilterSerializer], responses={200: DeliveryPerformanceSerializer})
+    def get(self, request):
+        filters = request.query_params.dict()
+        data = BusinessIntelligenceService.get_delivery_performance(request.user, filters)
+        serializer = DeliveryPerformanceSerializer(data)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class AnalyticsFinancialAPIView(APIView):
+    """
+    GET: Retrieve financial analytics aggregating invoiced, settled, and paid freight values.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = FinancialAnalyticsSerializer
+
+    @extend_schema(parameters=[AnalyticsFilterSerializer], responses={200: FinancialAnalyticsSerializer})
+    def get(self, request):
+        filters = request.query_params.dict()
+        data = BusinessIntelligenceService.get_financial_analytics(request.user, filters)
+        serializer = FinancialAnalyticsSerializer(data)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class AnalyticsMarketAPIView(APIView):
+    """
+    GET: Retrieve market pressure and price recommendation analytics.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = MarketAnalyticsSerializer
+
+    @extend_schema(parameters=[AnalyticsFilterSerializer], responses={200: MarketAnalyticsSerializer})
+    def get(self, request):
+        filters = request.query_params.dict()
+        data = BusinessIntelligenceService.get_market_analytics(request.user, filters)
+        serializer = MarketAnalyticsSerializer(data)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class AnalyticsRiskAPIView(APIView):
+    """
+    GET: Retrieve operational risk level distribution and risk trend analytics.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = RiskAnalyticsSerializer
+
+    @extend_schema(parameters=[AnalyticsFilterSerializer], responses={200: RiskAnalyticsSerializer})
+    def get(self, request):
+        filters = request.query_params.dict()
+        data = BusinessIntelligenceService.get_risk_analytics(request.user, filters)
+        serializer = RiskAnalyticsSerializer(data)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class AnalyticsIncidentAPIView(APIView):
+    """
+    GET: Retrieve driver incident report analytics and severity distribution.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = IncidentAnalyticsSerializer
+
+    @extend_schema(parameters=[AnalyticsFilterSerializer], responses={200: IncidentAnalyticsSerializer})
+    def get(self, request):
+        filters = request.query_params.dict()
+        data = BusinessIntelligenceService.get_incident_analytics(request.user, filters)
+        serializer = IncidentAnalyticsSerializer(data)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class AnalyticsRouteAPIView(APIView):
+    """
+    GET: Retrieve route optimization distance, deviation, and fuel analytics.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = RouteAnalyticsSerializer
+
+    @extend_schema(parameters=[AnalyticsFilterSerializer], responses={200: RouteAnalyticsSerializer})
+    def get(self, request):
+        filters = request.query_params.dict()
+        data = BusinessIntelligenceService.get_route_analytics(request.user, filters)
+        serializer = RouteAnalyticsSerializer(data)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class AnalyticsAutomationAPIView(APIView):
+    """
+    GET: Retrieve automation workflow recommendation rates and execution metrics.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = AutomationAnalyticsSerializer
+
+    @extend_schema(parameters=[AnalyticsFilterSerializer], responses={200: AutomationAnalyticsSerializer})
+    def get(self, request):
+        filters = request.query_params.dict()
+        data = BusinessIntelligenceService.get_automation_analytics(request.user, filters)
+        serializer = AutomationAnalyticsSerializer(data)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class AnalyticsEventAPIView(APIView):
+    """
+    GET: Retrieve operational event distribution and notification privacy analytics.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = EventAnalyticsSerializer
+
+    @extend_schema(parameters=[AnalyticsFilterSerializer], responses={200: EventAnalyticsSerializer})
+    def get(self, request):
+        filters = request.query_params.dict()
+        data = BusinessIntelligenceService.get_operational_event_analytics(request.user, filters)
+        serializer = EventAnalyticsSerializer(data)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class AnalyticsCorridorAPIView(APIView):
+    """
+    GET: Retrieve aggregated freight corridor performance analytics.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = CorridorAnalyticsSerializer
+
+    @extend_schema(parameters=[AnalyticsFilterSerializer], responses={200: CorridorAnalyticsSerializer})
+    def get(self, request):
+        filters = request.query_params.dict()
+        data = BusinessIntelligenceService.get_corridor_analytics(request.user, filters)
+        serializer = CorridorAnalyticsSerializer(data)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class AnalyticsTopPerformersAPIView(APIView):
+    """
+    GET: Retrieve deterministic top transporter, driver, and corridor performance rankings.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = TopPerformerSerializer
+
+    @extend_schema(parameters=[AnalyticsFilterSerializer], responses={200: TopPerformerSerializer})
+    def get(self, request):
+        filters = request.query_params.dict()
+        data = BusinessIntelligenceService.get_top_performers(request.user, filters)
+        serializer = TopPerformerSerializer(data)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class AnalyticsTrendsAPIView(APIView):
+    """
+    GET: Retrieve time-series trend analytics for specified metric (shipments, incidents, risk, revenue, automation, events).
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = TrendAnalyticsSerializer
+
+    @extend_schema(parameters=[AnalyticsFilterSerializer], responses={200: TrendAnalyticsSerializer})
+    def get(self, request):
+        filters = request.query_params.dict()
+        metric = filters.get('metric', 'shipments')
+        period = filters.get('period', '30d')
+        data = BusinessIntelligenceService.get_trend_analytics(request.user, metric, period, filters)
+        serializer = TrendAnalyticsSerializer(data)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class AnalyticsReportsAPIView(APIView):
+    """
+    GET: Generate dynamic analytics report (executive, operational, financial, risk, market, automation).
+    Supports format=json and format=csv exports.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = GenericReportSerializer
+
+    def perform_content_negotiation(self, request, force=False):
+        renderers = self.get_renderers()
+        return (renderers[0], renderers[0].media_type)
+
+    @extend_schema(parameters=[AnalyticsFilterSerializer], responses={200: GenericReportSerializer})
+    def get(self, request, report_type):
+
+
+        export_format = (request.GET.get('format') or request.query_params.get('format') or 'json').lower()
+        report_data = BusinessIntelligenceService.get_report(request.user, report_type, request.query_params.dict())
+
+
+        if export_format == 'csv':
+            csv_content = BusinessIntelligenceService.render_csv_report(report_data, report_type)
+            response = HttpResponse(csv_content, content_type='text/csv')
+            response['Content-Disposition'] = f'attachment; filename="tradeflow_report_{report_type}.csv"'
+            return response
+
+        serializer = GenericReportSerializer(report_data)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+
 
 
 

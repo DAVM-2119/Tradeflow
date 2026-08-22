@@ -153,6 +153,24 @@ TradeFlow is a digital freight marketplace and logistics optimization platform c
 | `GET` | `/api/v1/system/metrics/` | Retrieve internal operational reliability metrics (request rates, error rates, dependency failures, WS stats) | Admin Only |
 | `GET` | `/api/v1/system/status/` | Retrieve safe architectural metadata without exposing secrets or credentials | Admin Only |
 
+### 14. Analytics, Reporting & Business Intelligence (`/api/v1/analytics/`)
+| Method | Endpoint | Description | Auth / Role Required |
+| :--- | :--- | :--- | :--- |
+| `GET` | `/api/v1/analytics/dashboard/` | Unified executive analytics overview (shipments, delivery, financial, risk, incidents, automation) | Authenticated / Scoped |
+| `GET` | `/api/v1/analytics/shipments/` | Shipment lifecycle metrics, completion rate, and status distribution | Authenticated / Scoped |
+| `GET` | `/api/v1/analytics/delivery-performance/` | On-time delivery rate, delay minutes, and estimated vs actual duration analysis | Authenticated / Scoped |
+| `GET` | `/api/v1/analytics/financial/` | Decimal-safe invoiced, settled, and paid freight financial aggregations | Authenticated / Scoped |
+| `GET` | `/api/v1/analytics/market/` | Price recommendations, market pressure distribution, and pricing confidence | Authenticated / Scoped |
+| `GET` | `/api/v1/analytics/risk/` | Operational risk level distribution, risk scores, and time-bucketed risk trends | Authenticated / Scoped |
+| `GET` | `/api/v1/analytics/incidents/` | Driver incident report analytics, severity distribution, and incidents per shipment | Authenticated / Scoped |
+| `GET` | `/api/v1/analytics/routes/` | Route distance aggregation, deviation counts, and fuel consumption/cost analytics | Authenticated / Scoped |
+| `GET` | `/api/v1/analytics/automation/` | Recommendation approval rate, execution rate, rejection rate, and failure rate | Authenticated / Scoped |
+| `GET` | `/api/v1/analytics/events/` | Operational event distribution and notification privacy read/acknowledgement rates | Authenticated / Scoped |
+| `GET` | `/api/v1/analytics/corridors/` | Aggregated origin-destination corridor volume, distance, and freight value metrics | Authenticated / Scoped |
+| `GET` | `/api/v1/analytics/top-performers/` | Deterministic top transporter, driver, and corridor performance rankings | Authenticated / Scoped |
+| `GET` | `/api/v1/analytics/trends/` | Time-series bucketed trend analysis (`shipments`, `incidents`, `risk`, `revenue`, `automation`, `events`) | Authenticated / Scoped |
+| `GET` | `/api/v1/analytics/reports/{type}/` | Dynamic report generation (`executive`, `operational`, `financial`, `risk`, `market`, `automation`) in JSON & CSV | Authenticated / Scoped |
+
 ---
 
 ## Business & Security Rules
@@ -173,6 +191,8 @@ TradeFlow is a digital freight marketplace and logistics optimization platform c
 - **Real-Time Operations, Notifications & Event Intelligence**: Persists immutable, deduplicated operational events across all operational triggers, resolves authorized recipients, applies granular delivery preferences with critical severity overrides, and pushes real-time WebSocket payloads via Django Channels & Redis (`/ws/notifications/`, `/ws/shipments/{shipment_id}/events/`). All WebSocket streams require JWT token authentication. Real-time notifications and events NEVER mutate core business state.
 - **Operational Command Center & Management Dashboard Intelligence**: Aggregates operational health, risk distribution, alert trends, driver incidents, route telemetry, market pressure, and automation workflow metrics into a unified decision-support command center (`/api/v1/operations/`, `/ws/operations/`). Strict read-only decision support with participant role isolation (Admins see system-wide metrics; Shippers/Transporters/Drivers see authorized shipment operational data). Command center aggregations NEVER execute autonomous business actions.
 - **Production Reliability, Observability & Resilience**: Enforces sanitized request correlation IDs (`X-Request-ID`), structured logging, request duration tracking (`duration_ms`), slow operation alerts (>=500ms), and DRF error handling (`tradeflow_custom_exception_handler`). Provides `GET /api/v1/system/health/`, `GET /api/v1/system/readiness/`, `GET /api/v1/system/metrics/`, and `GET /api/v1/system/status/`. Redis failure triggers deterministic fallback calculation without failing command center endpoints. Observability metrics and health probes NEVER mutate core business state.
+- **Analytics, Reporting & Business Intelligence**: Provides read-only executive, shipment, delivery, financial (Decimal-safe), market, risk, incident, route, automation, event, corridor, top performer, and trend analytics (`/api/v1/analytics/`). Enforces participant role isolation (`_get_authorized_shipments_queryset`). Supports dynamic JSON & CSV report exports (`/api/v1/analytics/reports/{type}/`). Redis caching (TTL 60s) with silent fallback to database calculation. Analytics probes NEVER mutate core business state.
+
 
 
 
