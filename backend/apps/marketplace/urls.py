@@ -57,6 +57,10 @@ from apps.marketplace.views import (
     ShipmentFuelPredictionAPIView,
     ShipmentIncidentRiskPredictionAPIView,
     ShipmentPredictionHistoryAPIView,
+    PriceRecommendationAPIView,
+    PriceRecommendationHistoryAPIView,
+    MarketIntelligenceAPIView,
+    PricingStrategyListAPIView,
 )
 
 urlpatterns = [
@@ -131,6 +135,13 @@ urlpatterns = [
     path('shipments/<int:shipment_id>/predictions/incident-risk/', ShipmentIncidentRiskPredictionAPIView.as_view(), name='shipment-prediction-incident-risk'),
     path('shipments/<int:shipment_id>/predictions/history/', ShipmentPredictionHistoryAPIView.as_view(), name='shipment-prediction-history'),
 
+    # Phase 12: Dynamic Pricing & Freight Market Intelligence
+    path('shipments/<int:shipment_id>/pricing/', PriceRecommendationAPIView.as_view(), name='shipment-pricing-recommendation'),
+    path('shipments/<int:shipment_id>/pricing/history/', PriceRecommendationHistoryAPIView.as_view(), name='shipment-pricing-history'),
+    path('shipments/<int:shipment_id>/pricing/market/', MarketIntelligenceAPIView.as_view(), name='shipment-pricing-market'),
+    path('pricing/strategies/', PricingStrategyListAPIView.as_view(), name='pricing-strategy-list'),
+
     # Ratings
     path('ratings/', RatingListCreateView.as_view(), name='rating-list-create'),
 ]
+

@@ -1173,4 +1173,85 @@ class ShipmentPredictionHistoryAPIView(APIView):
         return Response(serializer.data, status=status.HTTP_200_OK)
 
 
+# ============================================================================
+# PHASE 12: DYNAMIC PRICING & FREIGHT MARKET INTELLIGENCE VIEWS
+# ============================================================================
+
+from apps.marketplace.models import PricingStrategy, PriceRecommendation, PricingMarketSnapshot
+from apps.marketplace.pricing_services import DynamicPricingService
+from apps.marketplace.pricing_serializers import (
+    PricingStrategySerializer, PriceRecommendationSerializer, PricingRecommendationResponseSerializer,
+    MarketIntelligenceResponseSerializer
+)
+
+
+class PriceRecommendationAPIView(APIView):
+    """
+    GET: Calculate and persist a decision-support dynamic freight price recommendation for a shipment.
+    """
+    permission_classes = [permissions.IsAuthenticated, IsShipmentParticipantOrAdmin]
+
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(name='strategy_id', description='Optional specific pricing strategy ID to evaluate', required=False, type=int)
+        ],
+        responses={200: PricingRecommendationResponseSerializer}
+    )
+    def get(self, request, shipment_id):
+        shipment = get_object_or_404(Shipment, pk=shipment_id)
+        self.check_object_permissions(request, shipment)
+
+        strategy = None
+        strategy_id = request.query_params.get('strategy_id')
+        if strategy_id:
+            try:
+                strategy = PricingStrategy.objects.get(pk=int(strategy_id), is_active=True)
+            except (ValueError, PricingStrategy.DoesNotExist):
+                raise ValidationError({"strategy_id": "Invalid or inactive pricing strategy ID specified."})
+
+        recommendation = DynamicPricingService.generate_price_recommendation(shipment, strategy=strategy)
+        return Response(recommendation, status=status.HTTP_200_OK)
+
+
+class PriceRecommendationHistoryAPIView(APIView):
+    """
+    GET: Paginated historical price recommendations for auditability (-newest first).
+    """
+    permission_classes = [permissions.IsAuthenticated, IsShipmentParticipantOrAdmin]
+
+    @extend_schema(responses={200: PriceRecommendationSerializer(many=True)})
+    def get(self, request, shipment_id):
+        shipment = get_object_or_404(Shipment, pk=shipment_id)
+        self.check_object_permissions(request, shipment)
+
+        qs = DynamicPricingService.get_pricing_history(shipment)
+        serializer = PriceRecommendationSerializer(qs, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class MarketIntelligenceAPIView(APIView):
+    """
+    GET: Freight market intelligence and corridor demand/supply statistics.
+    """
+    permission_classes = [permissions.IsAuthenticated, IsShipmentParticipantOrAdmin]
+
+    @extend_schema(responses={200: MarketIntelligenceResponseSerializer})
+    def get(self, request, shipment_id):
+        shipment = get_object_or_404(Shipment, pk=shipment_id)
+        self.check_object_permissions(request, shipment)
+
+        intelligence = DynamicPricingService.get_market_intelligence(shipment)
+        return Response(intelligence, status=status.HTTP_200_OK)
+
+
+class PricingStrategyListAPIView(generics.ListAPIView):
+    """
+    GET: List active pricing strategies (Admin only).
+    """
+    permission_classes = [permissions.IsAuthenticated, permissions.IsAdminUser]
+    serializer_class = PricingStrategySerializer
+    queryset = PricingStrategy.objects.all().order_by('-is_active', 'name', 'version')
+
+
+
 

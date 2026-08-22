@@ -120,6 +120,14 @@ TradeFlow is a digital freight marketplace and logistics optimization platform c
 | `GET` | `/api/v1/shipments/{id}/predictions/incident-risk/` | Incident risk prediction based on driver history and route deviation | Shipment Participant / Admin |
 | `GET` | `/api/v1/shipments/{id}/predictions/history/` | View paginated historical prediction audit trail | Shipment Participant / Admin |
 
+### 10. Dynamic Pricing & Freight Market Intelligence (`/api/v1/`)
+| Method | Endpoint | Description | Auth / Role Required |
+| :--- | :--- | :--- | :--- |
+| `GET` | `/api/v1/shipments/{id}/pricing/` | Calculate and persist decision-support freight price recommendations (minimum, recommended, maximum) | Shipment Participant / Admin |
+| `GET` | `/api/v1/shipments/{id}/pricing/history/` | View paginated historical price recommendation audit records | Shipment Participant / Admin |
+| `GET` | `/api/v1/shipments/{id}/pricing/market/` | View corridor market intelligence and demand/supply statistics | Shipment Participant / Admin |
+| `GET` | `/api/v1/pricing/strategies/` | List active pricing strategies and rate parameters | Admin Only |
+
 ---
 
 ## Business & Security Rules
@@ -135,6 +143,7 @@ TradeFlow is a digital freight marketplace and logistics optimization platform c
 - **Offline-First Synchronization & Incident Reporting**: Synchronizes client-queued events in isolated savepoints. Enforces atomic idempotency via PostgreSQL unique constraints on `client_event_id`. Captures driver incident reports (`ACCIDENT`, `CHECKPOINT_DELAY`, `ROAD_PROBLEM`, `SECURITY_INCIDENT`, etc.) linked to shipments.
 - **Route Optimization, Haversine Distance & Fuel Analytics**: Computes great-circle distance via Haversine formula in km. Sums ordered waypoint distances, calculates travel duration based on configurable average speed (default 50 km/h), calculates fuel consumption (km/L) and fuel costs (ETB). Recalculates routes without destroying historical audit history, detecting route deviations (`ON_ROUTE` vs `DEVIATED`).
 - **AI Predictive Logistics & Advisory Intelligence**: Predicts ETA delays, shipment risk, route risk, fuel costs, incident probabilities, and transparent weighted operational risk (ETA 30%, Incident 25%, Route 20%, Fuel 15%, Deviation 10%). All predictions are strictly advisory and NEVER mutate business state. Handles insufficient data safely (`prediction_available: false`).
+- **Dynamic Freight Pricing Engine & Decision Support**: Calculates recommended, minimum, and maximum freight prices in ETB based on route distance, fuel analytics, operational risk, deviation premiums, and demand/supply market pressure (`LOW`, `NORMAL`, `HIGH`). All pricing outputs are strictly decision-support recommendations and NEVER automatically mutate existing shipment, bid, invoice, or settlement values.
 
 ---
 
@@ -165,7 +174,7 @@ pipenv install --dev
 pipenv run python manage.py migrate
 ```
 
-### 5. Verify System Checks & Run Full Test Suite (118/118 Passed 100%)
+### 5. Verify System Checks & Run Full Test Suite (133/133 Passed 100%)
 ```bash
 pipenv run python manage.py check
 pipenv run pytest

@@ -21,7 +21,13 @@ from apps.marketplace.models import (
     RouteRecalculation,
     PredictiveModel,
     PredictionRecord,
+    PricingStrategy,
+    PriceRecommendation,
+    PricingMarketSnapshot,
 )
+
+
+
 
 
 @admin.register(Vehicle)
@@ -189,5 +195,35 @@ class PredictionRecordAdmin(admin.ModelAdmin):
     list_filter = ('prediction_type', 'risk_level', 'created_at')
     search_fields = ('shipment__tracking_number', 'prediction_model__name')
     readonly_fields = ('shipment', 'route', 'prediction_model', 'prediction_type', 'prediction_value', 'risk_score', 'risk_level', 'confidence_score', 'prediction_horizon_hours', 'input_features', 'explanation', 'created_at')
+
+
+@admin.register(PricingStrategy)
+class PricingStrategyAdmin(admin.ModelAdmin):
+    list_display = ('name', 'version', 'is_active', 'base_rate_per_km', 'minimum_rate_per_km', 'maximum_rate_per_km', 'created_at')
+    list_filter = ('is_active', 'created_at')
+    search_fields = ('name', 'version', 'description')
+    readonly_fields = ('created_at', 'updated_at')
+
+
+@admin.register(PriceRecommendation)
+class PriceRecommendationAdmin(admin.ModelAdmin):
+    list_display = ('id', 'shipment', 'recommended_price_etb', 'minimum_price_etb', 'maximum_price_etb', 'market_pressure', 'risk_level', 'pricing_confidence_score', 'created_at')
+    list_filter = ('market_pressure', 'risk_level', 'created_at')
+    search_fields = ('shipment__tracking_number',)
+    readonly_fields = (
+        'shipment', 'pricing_strategy', 'recommended_price_etb', 'minimum_price_etb', 'maximum_price_etb',
+        'base_price_etb', 'distance_adjustment_etb', 'fuel_adjustment_etb', 'risk_adjustment_etb',
+        'market_adjustment_etb', 'pricing_confidence_score', 'market_pressure', 'risk_level',
+        'factors', 'calculation_snapshot', 'created_at'
+    )
+
+
+@admin.register(PricingMarketSnapshot)
+class PricingMarketSnapshotAdmin(admin.ModelAdmin):
+    list_display = ('id', 'origin_region', 'destination_region', 'market_pressure', 'active_load_count', 'active_bid_count', 'available_transporter_count', 'snapshot_at')
+    list_filter = ('market_pressure', 'snapshot_at')
+    search_fields = ('origin_region', 'destination_region')
+    readonly_fields = ('snapshot_at', 'created_at')
+
 
 

@@ -1129,3 +1129,138 @@ class PredictionRecord(models.Model):
     def __str__(self):
         return f"{self.get_prediction_type_display()} for {self.shipment.tracking_number}: {self.risk_level} ({self.risk_score})"
 
+
+# ============================================================================
+# PHASE 12: DYNAMIC PRICING & FREIGHT MARKET INTELLIGENCE MODELS
+# ============================================================================
+
+class MarketPressure(models.TextChoices):
+    LOW = 'LOW', 'Low Demand Pressure (Abundant Transporters / Low Load Volume)'
+    NORMAL = 'NORMAL', 'Normal Balanced Market Conditions'
+    HIGH = 'HIGH', 'High Demand Pressure (High Load Volume / Transporter Scarcity)'
+
+
+class PricingStrategy(models.Model):
+    """
+    Configurable pricing strategy parameters and factor weighting rules for freight calculations.
+    """
+    name = models.CharField(max_length=100)
+    version = models.CharField(max_length=20, default='1.0')
+    description = models.TextField(blank=True)
+    is_active = models.BooleanField(default=True, db_index=True)
+
+    base_rate_per_km = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('50.00'))
+    minimum_rate_per_km = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('35.00'))
+    maximum_rate_per_km = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('120.00'))
+
+    fuel_weight = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('1.00'))
+    distance_weight = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('1.00'))
+    risk_weight = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('1.00'))
+    incident_weight = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('1.00'))
+    route_deviation_weight = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('1.00'))
+    market_demand_weight = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('1.00'))
+    market_supply_weight = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('1.00'))
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Pricing Strategy'
+        verbose_name_plural = 'Pricing Strategies'
+        unique_together = ('name', 'version')
+        ordering = ['-is_active', 'name', 'version']
+        indexes = [
+            models.Index(fields=['is_active']),
+            models.Index(fields=['name', 'version']),
+        ]
+
+    def __str__(self):
+        status = "Active" if self.is_active else "Inactive"
+        return f"{self.name} v{self.version} ({status})"
+
+
+class PriceRecommendation(models.Model):
+    """
+    Auditable persistent record of generated freight price recommendations for decision support.
+    """
+    shipment = models.ForeignKey(
+        Shipment,
+        on_delete=models.CASCADE,
+        related_name='price_recommendations',
+        db_index=True
+    )
+    pricing_strategy = models.ForeignKey(
+        PricingStrategy,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='recommendations'
+    )
+    recommended_price_etb = models.DecimalField(max_digits=12, decimal_places=2)
+    minimum_price_etb = models.DecimalField(max_digits=12, decimal_places=2)
+    maximum_price_etb = models.DecimalField(max_digits=12, decimal_places=2)
+
+    base_price_etb = models.DecimalField(max_digits=12, decimal_places=2)
+    distance_adjustment_etb = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0.00'))
+    fuel_adjustment_etb = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0.00'))
+    risk_adjustment_etb = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0.00'))
+    market_adjustment_etb = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0.00'))
+
+    pricing_confidence_score = models.DecimalField(max_digits=4, decimal_places=2, default=Decimal('0.85'))
+    market_pressure = models.CharField(max_length=20, choices=MarketPressure.choices, default=MarketPressure.NORMAL, db_index=True)
+    risk_level = models.CharField(max_length=20, choices=RiskLevel.choices, default=RiskLevel.LOW, db_index=True)
+
+    factors = models.JSONField(default=list, help_text="Structured list of pricing breakdown factors with ETB impact and description.")
+    calculation_snapshot = models.JSONField(default=dict, help_text="Audit snapshot of exact input features (distance, fuel cost, risk score, market pressure).")
+
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        verbose_name = 'Price Recommendation'
+        verbose_name_plural = 'Price Recommendations'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['shipment', '-created_at']),
+            models.Index(fields=['market_pressure']),
+            models.Index(fields=['risk_level']),
+            models.Index(fields=['created_at']),
+        ]
+
+    def __str__(self):
+        return f"Recommendation {self.recommended_price_etb} ETB for {self.shipment.tracking_number} ({self.market_pressure})"
+
+
+class PricingMarketSnapshot(models.Model):
+    """
+    Internal market condition snapshot aggregated from database metrics along transport corridors.
+    """
+    origin_region = models.CharField(max_length=100, db_index=True)
+    destination_region = models.CharField(max_length=100, db_index=True)
+
+    active_load_count = models.IntegerField(default=0)
+    active_bid_count = models.IntegerField(default=0)
+    available_transporter_count = models.IntegerField(default=0)
+
+    average_historical_price_etb = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    average_price_per_km = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+
+    demand_score = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('50.00'))
+    supply_score = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('50.00'))
+    market_pressure = models.CharField(max_length=20, choices=MarketPressure.choices, default=MarketPressure.NORMAL)
+
+    snapshot_at = models.DateTimeField(default=timezone.now, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = 'Pricing Market Snapshot'
+        verbose_name_plural = 'Pricing Market Snapshots'
+        ordering = ['-snapshot_at']
+        indexes = [
+            models.Index(fields=['origin_region', 'destination_region', '-snapshot_at']),
+            models.Index(fields=['snapshot_at']),
+        ]
+
+    def __str__(self):
+        return f"Market Snapshot {self.origin_region} -> {self.destination_region} ({self.market_pressure})"
+
+
