@@ -130,7 +130,20 @@ TradeFlow is a digital freight marketplace and logistics optimization platform c
 | `POST` | `/api/v1/automation/recommendations/{id}/approve/` | Approve a pending recommendation | Shipment Participant / Admin |
 | `POST` | `/api/v1/automation/recommendations/{id}/reject/` | Reject a pending recommendation with optional rejection reason | Shipment Participant / Admin |
 | `POST` | `/api/v1/automation/recommendations/{id}/execute/` | Execute an approved recommendation safely and log execution record | Shipment Participant / Admin |
-| `GET` | `/api/v1/automation/rules/` | List active automation rules and priority configurations | Admin Only |
+### 12. Operational Command Center, Alert Intelligence & Dashboard (`/api/v1/operations/`)
+| Method | Endpoint | Description | Auth / Role Required |
+| :--- | :--- | :--- | :--- |
+| `GET` | `/api/v1/operations/dashboard/` | Real-time aggregated command center operational summary | Authenticated User |
+| `GET` | `/api/v1/operations/health/` | Bounded transparent operational health score (0-100) and factor breakdowns | Authenticated User |
+| `GET` | `/api/v1/operations/attention/` | Urgency-ranked attention queue of active shipments needing review | Authenticated User |
+| `GET` | `/api/v1/operations/alerts/` | Categorized alert intelligence by severity, event type, and affected shipments | Authenticated User |
+| `GET` | `/api/v1/operations/alerts/trends/` | Time-bucketed alert trend analysis (`1h`, `6h`, `24h`, `7d`, `30d`) | Authenticated User |
+| `GET` | `/api/v1/operations/risk-distribution/` | Operational risk level distribution counts & percentages (`LOW`, `MEDIUM`, `HIGH`, `CRITICAL`) | Authenticated User |
+| `GET` | `/api/v1/operations/incidents/` | Phase 9 driver incident intelligence breakdown and active incident list | Authenticated User |
+| `GET` | `/api/v1/operations/telemetry/` | Phase 10 route deviation, telemetry freshness, and stale GPS counts | Authenticated User |
+| `GET` | `/api/v1/operations/market/` | Phase 12 market pressure, pricing confidence, and market snapshot analysis | Authenticated User |
+| `GET` | `/api/v1/operations/automation/` | Phase 13 workflow recommendation status & execution metrics | Authenticated User |
+| `GET` | `/api/v1/operations/shipments/{id}/summary/` | Unified single-shipment operational summary combining all Phase 9-14 intelligence | Shipment Participant / Admin |
 
 ---
 
@@ -150,6 +163,8 @@ TradeFlow is a digital freight marketplace and logistics optimization platform c
 - **Dynamic Freight Pricing Engine & Decision Support**: Calculates recommended, minimum, and maximum freight prices in ETB based on route distance, fuel analytics, operational risk, deviation premiums, and demand/supply market pressure (`LOW`, `NORMAL`, `HIGH`). All pricing outputs are strictly decision-support recommendations and NEVER automatically mutate existing shipment, bid, invoice, or settlement values.
 - **Automated Workflow & Human-in-the-Loop Smart Operations**: Evaluates active operational rules across Phase 9-12 data sources and generates structured workflow recommendations (`REVIEW_SHIPMENT`, `CONTACT_DRIVER`, `RECALCULATE_ROUTE`, `REVIEW_INCIDENT`, `REVIEW_PRICING`, `ESCALATE_TO_ADMIN`). Strictly enforces human-in-the-loop authorization (`PENDING` -> `APPROVED` / `REJECTED` -> `EXECUTED`). Duplicate pending recommendations are prevented per rule/shipment. Evaluation NEVER mutates business state without explicit user approval.
 - **Real-Time Operations, Notifications & Event Intelligence**: Persists immutable, deduplicated operational events across all operational triggers, resolves authorized recipients, applies granular delivery preferences with critical severity overrides, and pushes real-time WebSocket payloads via Django Channels & Redis (`/ws/notifications/`, `/ws/shipments/{shipment_id}/events/`). All WebSocket streams require JWT token authentication. Real-time notifications and events NEVER mutate core business state.
+- **Operational Command Center & Management Dashboard Intelligence**: Aggregates operational health, risk distribution, alert trends, driver incidents, route telemetry, market pressure, and automation workflow metrics into a unified decision-support command center (`/api/v1/operations/`, `/ws/operations/`). Strict read-only decision support with participant role isolation (Admins see system-wide metrics; Shippers/Transporters/Drivers see authorized shipment operational data). Command center aggregations NEVER execute autonomous business actions.
+
 
 ---
 
