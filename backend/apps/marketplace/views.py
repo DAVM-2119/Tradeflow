@@ -119,6 +119,21 @@ from apps.marketplace.predictive_serializers import (
     OperationalRiskResponseSerializer,
     PredictionHistorySerializer,
 )
+from apps.marketplace.models import (
+    AutomationRule,
+    AutomationRecommendation,
+    AutomationExecution,
+)
+from apps.marketplace.automation_services import AutomationService
+from apps.marketplace.automation_serializers import (
+    AutomationRuleSerializer,
+    AutomationRecommendationSerializer,
+    AutomationRecommendationListSerializer,
+    AutomationEvaluationResponseSerializer,
+    AutomationReviewInputSerializer,
+    AutomationExecutionSerializer,
+)
+
 
 
 # ============================================================================
@@ -1251,6 +1266,132 @@ class PricingStrategyListAPIView(generics.ListAPIView):
     permission_classes = [permissions.IsAuthenticated, permissions.IsAdminUser]
     serializer_class = PricingStrategySerializer
     queryset = PricingStrategy.objects.all().order_by('-is_active', 'name', 'version')
+
+
+# ============================================================================
+# PHASE 13: AUTOMATED WORKFLOW & SMART OPERATIONS VIEWS
+# ============================================================================
+
+class EvaluateShipmentAutomationAPIView(APIView):
+    """
+    POST: Evaluate shipment operational conditions and generate decision-support recommendations.
+    """
+    permission_classes = [permissions.IsAuthenticated, IsShipmentParticipantOrAdmin]
+
+    @extend_schema(request=None, responses={200: AutomationEvaluationResponseSerializer})
+    def post(self, request, shipment_id):
+        shipment = get_object_or_404(Shipment, pk=shipment_id)
+        self.check_object_permissions(request, shipment)
+
+        result = AutomationService.evaluate_shipment(shipment)
+        serializer = AutomationEvaluationResponseSerializer(result)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class ShipmentAutomationListAPIView(generics.ListAPIView):
+    """
+    GET: List pending and active recommendations for a shipment.
+    """
+    permission_classes = [permissions.IsAuthenticated, IsShipmentParticipantOrAdmin]
+    serializer_class = AutomationRecommendationSerializer
+
+    def get_queryset(self):
+        shipment_id = self.kwargs.get('shipment_id')
+        shipment = get_object_or_404(Shipment, pk=shipment_id)
+        self.check_object_permissions(self.request, shipment)
+        return AutomationRecommendation.objects.filter(shipment=shipment).select_related('rule', 'reviewed_by').order_by('-created_at')
+
+
+class ShipmentAutomationHistoryAPIView(generics.ListAPIView):
+    """
+    GET: Paginated recommendation history for a shipment.
+    """
+    permission_classes = [permissions.IsAuthenticated, IsShipmentParticipantOrAdmin]
+    serializer_class = AutomationRecommendationSerializer
+
+    def get_queryset(self):
+        shipment_id = self.kwargs.get('shipment_id')
+        shipment = get_object_or_404(Shipment, pk=shipment_id)
+        self.check_object_permissions(self.request, shipment)
+        return AutomationService.get_recommendation_history(shipment)
+
+
+class AutomationRecommendationDetailAPIView(generics.RetrieveAPIView):
+    """
+    GET: Retrieve recommendation detail by ID.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = AutomationRecommendationSerializer
+    queryset = AutomationRecommendation.objects.all().select_related('shipment', 'rule', 'reviewed_by')
+
+    def get_object(self):
+        obj = super().get_object()
+        if not AutomationService.check_user_authorization(obj.shipment, self.request.user):
+            raise PermissionDenied("You are not authorized to view this recommendation.")
+        return obj
+
+
+class AutomationRecommendationApproveAPIView(APIView):
+    """
+    POST: Approve a pending recommendation (Participant / Admin authorization required).
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    @extend_schema(request=None, responses={200: AutomationRecommendationSerializer})
+    def post(self, request, pk):
+        recommendation = get_object_or_404(AutomationRecommendation, pk=pk)
+        if not AutomationService.check_user_authorization(recommendation.shipment, request.user):
+            raise PermissionDenied("You are not authorized to approve recommendations for this shipment.")
+
+        updated_rec = AutomationService.approve_recommendation(pk, request.user)
+        serializer = AutomationRecommendationSerializer(updated_rec)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class AutomationRecommendationRejectAPIView(APIView):
+    """
+    POST: Reject a pending recommendation with optional reason.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    @extend_schema(request=AutomationReviewInputSerializer, responses={200: AutomationRecommendationSerializer})
+    def post(self, request, pk):
+        recommendation = get_object_or_404(AutomationRecommendation, pk=pk)
+        if not AutomationService.check_user_authorization(recommendation.shipment, request.user):
+            raise PermissionDenied("You are not authorized to reject recommendations for this shipment.")
+
+        reason = request.data.get('reason', '')
+        updated_rec = AutomationService.reject_recommendation(pk, request.user, reason=reason)
+        serializer = AutomationRecommendationSerializer(updated_rec)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class AutomationRecommendationExecuteAPIView(APIView):
+    """
+    POST: Execute an approved recommendation.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    @extend_schema(request=None, responses={200: AutomationExecutionSerializer})
+    def post(self, request, pk):
+
+        recommendation = get_object_or_404(AutomationRecommendation, pk=pk)
+        if not AutomationService.check_user_authorization(recommendation.shipment, request.user):
+            raise PermissionDenied("You are not authorized to execute recommendations for this shipment.")
+
+        execution = AutomationService.execute_recommendation(pk, request.user)
+        serializer = AutomationExecutionSerializer(execution)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class AutomationRuleListAPIView(generics.ListCreateAPIView):
+    """
+    GET/POST: List or create automation detection rules (Admin only).
+    """
+    permission_classes = [permissions.IsAuthenticated, permissions.IsAdminUser]
+    serializer_class = AutomationRuleSerializer
+    queryset = AutomationRule.objects.all().order_by('name')
+
 
 
 

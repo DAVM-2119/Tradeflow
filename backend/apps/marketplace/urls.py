@@ -61,6 +61,14 @@ from apps.marketplace.views import (
     PriceRecommendationHistoryAPIView,
     MarketIntelligenceAPIView,
     PricingStrategyListAPIView,
+    EvaluateShipmentAutomationAPIView,
+    ShipmentAutomationListAPIView,
+    ShipmentAutomationHistoryAPIView,
+    AutomationRecommendationDetailAPIView,
+    AutomationRecommendationApproveAPIView,
+    AutomationRecommendationRejectAPIView,
+    AutomationRecommendationExecuteAPIView,
+    AutomationRuleListAPIView,
 )
 
 urlpatterns = [
@@ -141,7 +149,18 @@ urlpatterns = [
     path('shipments/<int:shipment_id>/pricing/market/', MarketIntelligenceAPIView.as_view(), name='shipment-pricing-market'),
     path('pricing/strategies/', PricingStrategyListAPIView.as_view(), name='pricing-strategy-list'),
 
+    # Phase 13: Automated Workflow & Smart Operations
+    path('shipments/<int:shipment_id>/automation/evaluate/', EvaluateShipmentAutomationAPIView.as_view(), name='shipment-automation-evaluate'),
+    path('shipments/<int:shipment_id>/automation/', ShipmentAutomationListAPIView.as_view(), name='shipment-automation-list'),
+    path('shipments/<int:shipment_id>/automation/history/', ShipmentAutomationHistoryAPIView.as_view(), name='shipment-automation-history'),
+    path('automation/recommendations/<int:pk>/', AutomationRecommendationDetailAPIView.as_view(), name='automation-recommendation-detail'),
+    path('automation/recommendations/<int:pk>/approve/', AutomationRecommendationApproveAPIView.as_view(), name='automation-recommendation-approve'),
+    path('automation/recommendations/<int:pk>/reject/', AutomationRecommendationRejectAPIView.as_view(), name='automation-recommendation-reject'),
+    path('automation/recommendations/<int:pk>/execute/', AutomationRecommendationExecuteAPIView.as_view(), name='automation-recommendation-execute'),
+    path('automation/rules/', AutomationRuleListAPIView.as_view(), name='automation-rule-list'),
+
     # Ratings
     path('ratings/', RatingListCreateView.as_view(), name='rating-list-create'),
 ]
+
 

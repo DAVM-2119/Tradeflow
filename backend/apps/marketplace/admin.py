@@ -24,7 +24,39 @@ from apps.marketplace.models import (
     PricingStrategy,
     PriceRecommendation,
     PricingMarketSnapshot,
+    AutomationRule,
+    AutomationRecommendation,
+    AutomationExecution,
 )
+
+
+@admin.register(AutomationRule)
+class AutomationRuleAdmin(admin.ModelAdmin):
+    list_display = ('name', 'rule_type', 'priority', 'is_active', 'created_at')
+    list_filter = ('rule_type', 'priority', 'is_active', 'created_at')
+    search_fields = ('name', 'description')
+    readonly_fields = ('created_at', 'updated_at')
+
+
+@admin.register(AutomationRecommendation)
+class AutomationRecommendationAdmin(admin.ModelAdmin):
+    list_display = ('id', 'shipment', 'rule', 'recommendation_type', 'priority', 'status', 'created_at', 'reviewed_by')
+    list_filter = ('status', 'priority', 'recommendation_type', 'created_at')
+    search_fields = ('shipment__tracking_number', 'title', 'description')
+    readonly_fields = (
+        'shipment', 'rule', 'recommendation_type', 'priority', 'title', 'description',
+        'recommended_action', 'context_snapshot', 'reviewed_by', 'reviewed_at',
+        'rejection_reason', 'execution_result', 'created_at', 'updated_at'
+    )
+
+
+@admin.register(AutomationExecution)
+class AutomationExecutionAdmin(admin.ModelAdmin):
+    list_display = ('id', 'recommendation', 'action_type', 'status', 'executed_by', 'executed_at')
+    list_filter = ('status', 'action_type', 'executed_at')
+    search_fields = ('recommendation__shipment__tracking_number', 'action_type')
+    readonly_fields = ('recommendation', 'executed_by', 'action_type', 'status', 'result', 'executed_at')
+
 
 
 

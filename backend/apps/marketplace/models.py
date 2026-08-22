@@ -1264,3 +1264,134 @@ class PricingMarketSnapshot(models.Model):
         return f"Market Snapshot {self.origin_region} -> {self.destination_region} ({self.market_pressure})"
 
 
+# ============================================================================
+# PHASE 13 — AUTOMATED WORKFLOW & SMART OPERATIONS ENUMS & MODELS
+# ============================================================================
+
+class RecommendationPriority(models.TextChoices):
+    LOW = 'LOW', 'Low'
+    MEDIUM = 'MEDIUM', 'Medium'
+    HIGH = 'HIGH', 'High'
+    CRITICAL = 'CRITICAL', 'Critical'
+
+
+class RecommendationStatus(models.TextChoices):
+    PENDING = 'PENDING', 'Pending Review'
+    APPROVED = 'APPROVED', 'Approved'
+    REJECTED = 'REJECTED', 'Rejected'
+    EXECUTED = 'EXECUTED', 'Executed'
+    FAILED = 'FAILED', 'Failed'
+
+
+class AutomationRuleType(models.TextChoices):
+    HIGH_OPERATIONAL_RISK = 'HIGH_OPERATIONAL_RISK', 'High Operational Risk'
+    ROUTE_DEVIATION = 'ROUTE_DEVIATION', 'Route Deviation Detected'
+    HIGH_ETA_DELAY = 'HIGH_ETA_DELAY', 'High ETA Delay Predicted'
+    INCIDENT_REPORTED = 'INCIDENT_REPORTED', 'Driver Incident Reported'
+    HIGH_FUEL_RISK = 'HIGH_FUEL_RISK', 'High Fuel Consumption/Cost'
+    HIGH_MARKET_PRESSURE = 'HIGH_MARKET_PRESSURE', 'High Corridor Market Pressure'
+    STALE_GPS_DATA = 'STALE_GPS_DATA', 'Stale GPS Telemetry'
+
+
+class AutomationRecommendationType(models.TextChoices):
+    REVIEW_SHIPMENT = 'REVIEW_SHIPMENT', 'Review Shipment Operations'
+    REVIEW_ROUTE = 'REVIEW_ROUTE', 'Review Planned Route'
+    RECALCULATE_ROUTE = 'RECALCULATE_ROUTE', 'Recalculate Route'
+    CONTACT_DRIVER = 'CONTACT_DRIVER', 'Contact Assigned Driver'
+    REVIEW_INCIDENT = 'REVIEW_INCIDENT', 'Review Reported Incident'
+    REVIEW_PRICING = 'REVIEW_PRICING', 'Review Freight Market Pricing'
+    ESCALATE_TO_ADMIN = 'ESCALATE_TO_ADMIN', 'Escalate to Platform Admin'
+
+
+class AutomationRule(models.Model):
+    """
+    Configurable operational automation detection rule.
+    """
+    name = models.CharField(max_length=150, unique=True, help_text="Unique descriptive name for the rule.")
+    rule_type = models.CharField(max_length=50, choices=AutomationRuleType.choices, db_index=True)
+    description = models.TextField(blank=True, help_text="Human-readable description of rule conditions.")
+
+    is_active = models.BooleanField(default=True, db_index=True)
+    priority = models.CharField(max_length=20, choices=RecommendationPriority.choices, default=RecommendationPriority.MEDIUM)
+    configuration = models.JSONField(default=dict, help_text="Configurable rule parameters and threshold metrics.")
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Automation Rule'
+        verbose_name_plural = 'Automation Rules'
+        ordering = ['name']
+
+    def __str__(self):
+        return f"Rule: {self.name} ({self.rule_type})"
+
+
+class AutomationRecommendation(models.Model):
+    """
+    Generated decision-support workflow recommendation requiring explicit user authorization.
+    """
+    shipment = models.ForeignKey(Shipment, on_delete=models.CASCADE, related_name='automation_recommendations', db_index=True)
+    rule = models.ForeignKey(AutomationRule, on_delete=models.SET_NULL, null=True, blank=True, related_name='recommendations')
+
+    recommendation_type = models.CharField(max_length=50, choices=AutomationRecommendationType.choices, db_index=True)
+    priority = models.CharField(max_length=20, choices=RecommendationPriority.choices, default=RecommendationPriority.MEDIUM, db_index=True)
+    status = models.CharField(max_length=20, choices=RecommendationStatus.choices, default=RecommendationStatus.PENDING, db_index=True)
+
+    title = models.CharField(max_length=200)
+    description = models.TextField()
+    recommended_action = models.CharField(max_length=200)
+
+    context_snapshot = models.JSONField(default=dict, help_text="Immutable operational evidence snapshot at evaluation time.")
+
+    reviewed_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='reviewed_recommendations')
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    rejection_reason = models.TextField(blank=True, help_text="Reason provided when recommendation is rejected.")
+
+    execution_result = models.JSONField(default=dict, blank=True, help_text="Audit details produced upon successful execution.")
+
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Automation Recommendation'
+        verbose_name_plural = 'Automation Recommendations'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['shipment', 'status']),
+            models.Index(fields=['shipment', 'rule', 'status']),
+            models.Index(fields=['status']),
+            models.Index(fields=['created_at']),
+        ]
+
+    def __str__(self):
+        return f"[{self.status}] {self.title} for Shipment {self.shipment.tracking_number}"
+
+
+class AutomationExecution(models.Model):
+    """
+    Immutable execution audit history for approved workflow recommendations.
+    """
+    recommendation = models.ForeignKey(AutomationRecommendation, on_delete=models.CASCADE, related_name='executions')
+    executed_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='executed_automation_actions')
+
+    action_type = models.CharField(max_length=50)
+    status = models.CharField(max_length=20, default='SUCCESS')
+    result = models.JSONField(default=dict)
+
+    executed_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        verbose_name = 'Automation Execution'
+        verbose_name_plural = 'Automation Executions'
+        ordering = ['-executed_at']
+        indexes = [
+            models.Index(fields=['recommendation', '-executed_at']),
+            models.Index(fields=['executed_at']),
+        ]
+
+    def __str__(self):
+        return f"Execution {self.action_type} on Rec #{self.recommendation_id} by {self.executed_by}"
+
+
+
