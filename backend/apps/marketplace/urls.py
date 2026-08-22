@@ -136,7 +136,23 @@ from apps.marketplace.views import (
     SecurityPolicyDetailAPIView,
     AuditIntegrityCheckAPIView,
     SecurityComplianceReportAPIView,
+    AIShipmentSummaryAPIView,
+    AIRiskExplanationAPIView,
+    AIIncidentAnalysisAPIView,
+    AIRouteExplanationAPIView,
+    AIPricingExplanationAPIView,
+    AIRecommendationCreateAPIView,
+    AIExecutiveSummaryAPIView,
+    AINaturalLanguageQueryAPIView,
+    AIInsightListAPIView,
+    AIInsightDetailAPIView,
+    AIRecommendationListAPIView,
+    AIRecommendationDetailAPIView,
+    AIUsageMetricsAPIView,
+    AIOverviewAPIView,
+    AIHealthCheckAPIView,
 )
+
 
 
 
@@ -310,9 +326,27 @@ urlpatterns = [
     path('security/audit-integrity/', AuditIntegrityCheckAPIView.as_view(), name='security-audit-integrity'),
     path('security/reports/<str:report_type>/', SecurityComplianceReportAPIView.as_view(), name='security-compliance-reports'),
 
+    # Phase 20: AI-Assisted Decision Support & Intelligent Operations
+    path('ai/shipments/<int:pk>/summary/', AIShipmentSummaryAPIView.as_view(), name='ai-shipment-summary'),
+    path('ai/shipments/<int:pk>/risk-explanation/', AIRiskExplanationAPIView.as_view(), name='ai-risk-explanation'),
+    path('ai/shipments/<int:pk>/incident-analysis/', AIIncidentAnalysisAPIView.as_view(), name='ai-incident-analysis'),
+    path('ai/shipments/<int:pk>/route-explanation/', AIRouteExplanationAPIView.as_view(), name='ai-route-explanation'),
+    path('ai/shipments/<int:pk>/pricing-explanation/', AIPricingExplanationAPIView.as_view(), name='ai-pricing-explanation'),
+    path('ai/shipments/<int:pk>/recommendations/', AIRecommendationCreateAPIView.as_view(), name='ai-recommendation-create'),
+    path('ai/executive-summary/', AIExecutiveSummaryAPIView.as_view(), name='ai-executive-summary'),
+    path('ai/query/', AINaturalLanguageQueryAPIView.as_view(), name='ai-query'),
+    path('ai/insights/', AIInsightListAPIView.as_view(), name='ai-insight-list'),
+    path('ai/insights/<int:pk>/', AIInsightDetailAPIView.as_view(), name='ai-insight-detail'),
+    path('ai/recommendations/', AIRecommendationListAPIView.as_view(), name='ai-recommendation-list'),
+    path('ai/recommendations/<int:pk>/', AIRecommendationDetailAPIView.as_view(), name='ai-recommendation-detail'),
+    path('ai/usage/', AIUsageMetricsAPIView.as_view(), name='ai-usage-metrics'),
+    path('ai/overview/', AIOverviewAPIView.as_view(), name='ai-overview'),
+    path('ai/health/', AIHealthCheckAPIView.as_view(), name='ai-health'),
+
     # Ratings
     path('ratings/', RatingListCreateView.as_view(), name='rating-list-create'),
 ]
+
 
 
 

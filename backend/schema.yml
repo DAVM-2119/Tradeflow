@@ -4,6 +4,324 @@ info:
   version: 1.0.0
   description: Intelligent Logistics & Freight Matching Platform for Landlocked Ethiopia
 paths:
+  /api/v1/ai/executive-summary/:
+    get:
+      operationId: v1_ai_executive_summary_retrieve
+      description: 'GET: Generate platform-wide executive operations decision-support
+        summary (Admin Only).'
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AIExecutiveSummary'
+          description: ''
+  /api/v1/ai/health/:
+    get:
+      operationId: v1_ai_health_retrieve
+      description: 'GET: Check AI provider operational health and response latency.'
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AIHealth'
+          description: ''
+  /api/v1/ai/insights/:
+    get:
+      operationId: v1_ai_insights_list
+      description: 'GET: List generated AI decision-support insights for authorized
+        user.'
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AIInsight'
+          description: ''
+  /api/v1/ai/insights/{id}/:
+    get:
+      operationId: v1_ai_insights_retrieve
+      description: 'GET: Retrieve details for a specific AI insight record.'
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AIInsight'
+          description: ''
+  /api/v1/ai/overview/:
+    get:
+      operationId: v1_ai_overview_retrieve
+      description: 'GET: Retrieve administrative AI decision-support dashboard overview
+        (Admin Only).'
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AIOverview'
+          description: ''
+  /api/v1/ai/query/:
+    post:
+      operationId: v1_ai_query_create
+      description: 'POST: Execute natural-language query across authorized TradeFlow
+        operational data.'
+      tags:
+      - v1
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AIQueryRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/AIQueryRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/AIQueryRequest'
+        required: true
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AIQueryResponse'
+          description: ''
+  /api/v1/ai/recommendations/:
+    get:
+      operationId: v1_ai_recommendations_list
+      description: 'GET: List AI-generated operational recommendations for authorized
+        user.'
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AIRecommendation'
+          description: ''
+  /api/v1/ai/recommendations/{id}/:
+    get:
+      operationId: v1_ai_recommendations_retrieve
+      description: 'GET: Retrieve specific AI recommendation details.'
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AIRecommendation'
+          description: ''
+  /api/v1/ai/shipments/{id}/incident-analysis/:
+    get:
+      operationId: v1_ai_shipments_incident_analysis_retrieve
+      description: 'GET: Analyze recent driver incidents and operational impacts for
+        a specific shipment.'
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AIIncidentAnalysis'
+          description: ''
+  /api/v1/ai/shipments/{id}/pricing-explanation/:
+    get:
+      operationId: v1_ai_shipments_pricing_explanation_retrieve
+      description: 'GET: Explain freight pricing recommendations and market pressure
+        for a specific shipment.'
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AIPricingExplanation'
+          description: ''
+  /api/v1/ai/shipments/{id}/recommendations/:
+    post:
+      operationId: v1_ai_shipments_recommendations_create
+      description: 'POST: Generate a human-in-the-loop decision-support recommendation
+        for a shipment. Remains PENDING until reviewed.'
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AIRecommendation'
+          description: ''
+  /api/v1/ai/shipments/{id}/risk-explanation/:
+    get:
+      operationId: v1_ai_shipments_risk_explanation_retrieve
+      description: 'GET: Explain risk level and major contributing factors for a specific
+        shipment.'
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AIRiskExplanation'
+          description: ''
+  /api/v1/ai/shipments/{id}/route-explanation/:
+    get:
+      operationId: v1_ai_shipments_route_explanation_retrieve
+      description: 'GET: Explain route progress, telemetry quality, and ETA variance
+        for a specific shipment.'
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AIRouteExplanation'
+          description: ''
+  /api/v1/ai/shipments/{id}/summary/:
+    get:
+      operationId: v1_ai_shipments_summary_retrieve
+      description: 'GET: Generate concise operational decision-support summary for
+        a specific shipment.'
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AIShipmentSummary'
+          description: ''
+  /api/v1/ai/usage/:
+    get:
+      operationId: v1_ai_usage_list
+      description: 'GET: Retrieve administrative AI token usage and cost metrics (Admin
+        Only).'
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AIUsageRecord'
+          description: ''
   /api/v1/analytics/automation/:
     get:
       operationId: v1_analytics_automation_retrieve
@@ -4412,6 +4730,614 @@ paths:
           description: No response body
 components:
   schemas:
+    AIExecutiveSummary:
+      type: object
+      properties:
+        generated_at:
+          type: string
+          format: date-time
+        summary:
+          type: string
+        operational_health:
+          type: string
+        shipment_metrics:
+          type: object
+          additionalProperties: {}
+        financial_trends:
+          type: object
+          additionalProperties: {}
+        risk_and_incidents:
+          type: object
+          additionalProperties: {}
+        key_recommendations:
+          type: array
+          items:
+            type: string
+        evidence:
+          type: array
+          items:
+            type: object
+            additionalProperties: {}
+        confidence:
+          type: number
+          format: double
+        model:
+          type: string
+        prompt_version:
+          type: string
+        request_id:
+          type: string
+      required:
+      - confidence
+      - financial_trends
+      - generated_at
+      - model
+      - operational_health
+      - prompt_version
+      - request_id
+      - risk_and_incidents
+      - shipment_metrics
+      - summary
+    AIHealth:
+      type: object
+      properties:
+        status:
+          type: string
+        provider:
+          type: string
+        model:
+          type: string
+        latency_ms:
+          type: integer
+        checked_at:
+          type: string
+          format: date-time
+      required:
+      - checked_at
+      - latency_ms
+      - model
+      - provider
+      - status
+    AIIncidentAnalysis:
+      type: object
+      properties:
+        shipment_id:
+          type: integer
+        incident_count:
+          type: integer
+        summary:
+          type: string
+        incidents_analyzed:
+          type: array
+          items:
+            type: object
+            additionalProperties: {}
+        probable_causes:
+          type: array
+          items:
+            type: string
+        operational_impact:
+          type: string
+        suggested_human_actions:
+          type: array
+          items:
+            type: string
+        evidence:
+          type: array
+          items:
+            type: object
+            additionalProperties: {}
+        confidence:
+          type: number
+          format: double
+        model:
+          type: string
+        prompt_version:
+          type: string
+        generated_at:
+          type: string
+          format: date-time
+        request_id:
+          type: string
+      required:
+      - confidence
+      - generated_at
+      - incident_count
+      - model
+      - operational_impact
+      - prompt_version
+      - request_id
+      - shipment_id
+      - summary
+    AIInsight:
+      type: object
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        user:
+          type: integer
+          readOnly: true
+        user_email:
+          type: string
+          format: email
+          title: Email address
+          readOnly: true
+        shipment:
+          type: integer
+          readOnly: true
+          nullable: true
+        insight_type:
+          allOf:
+          - $ref: '#/components/schemas/InsightTypeEnum'
+          readOnly: true
+        title:
+          type: string
+          readOnly: true
+        summary:
+          type: string
+          readOnly: true
+        detailed_analysis:
+          type: string
+          readOnly: true
+        confidence_score:
+          type: number
+          format: double
+          readOnly: true
+        severity:
+          type: string
+          readOnly: true
+        evidence:
+          readOnly: true
+        model_name:
+          type: string
+          readOnly: true
+        prompt_version:
+          type: string
+          readOnly: true
+        request_id:
+          type: string
+          readOnly: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        expires_at:
+          type: string
+          format: date-time
+          readOnly: true
+          nullable: true
+      required:
+      - confidence_score
+      - created_at
+      - detailed_analysis
+      - evidence
+      - expires_at
+      - id
+      - insight_type
+      - model_name
+      - prompt_version
+      - request_id
+      - severity
+      - shipment
+      - summary
+      - title
+      - user
+      - user_email
+    AIOverview:
+      type: object
+      properties:
+        total_requests:
+          type: integer
+        successful_generations:
+          type: integer
+        failed_generations:
+          type: integer
+        timeout_count:
+          type: integer
+        avg_latency_ms:
+          type: number
+          format: double
+        total_tokens:
+          type: integer
+        total_estimated_cost:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,8}(?:\.\d{0,4})?$
+        total_insights:
+          type: integer
+        total_recommendations:
+          type: integer
+        pending_recommendations:
+          type: integer
+        provider_health:
+          type: string
+        generated_at:
+          type: string
+          format: date-time
+      required:
+      - avg_latency_ms
+      - failed_generations
+      - generated_at
+      - pending_recommendations
+      - provider_health
+      - successful_generations
+      - timeout_count
+      - total_estimated_cost
+      - total_insights
+      - total_recommendations
+      - total_requests
+      - total_tokens
+    AIPricingExplanation:
+      type: object
+      properties:
+        shipment_id:
+          type: integer
+        market_pressure:
+          type: string
+        recommended_price:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,10}(?:\.\d{0,2})?$
+        summary:
+          type: string
+        pricing_factors:
+          type: array
+          items:
+            type: object
+            additionalProperties: {}
+        evidence:
+          type: array
+          items:
+            type: object
+            additionalProperties: {}
+        confidence:
+          type: number
+          format: double
+        model:
+          type: string
+        prompt_version:
+          type: string
+        generated_at:
+          type: string
+          format: date-time
+        request_id:
+          type: string
+      required:
+      - confidence
+      - generated_at
+      - market_pressure
+      - model
+      - prompt_version
+      - recommended_price
+      - request_id
+      - shipment_id
+      - summary
+    AIQueryRequest:
+      type: object
+      properties:
+        question:
+          type: string
+          maxLength: 1000
+      required:
+      - question
+    AIQueryResponse:
+      type: object
+      properties:
+        question:
+          type: string
+        answer:
+          type: string
+        evidence:
+          type: array
+          items:
+            type: object
+            additionalProperties: {}
+        confidence:
+          type: number
+          format: double
+        limitations:
+          type: array
+          items:
+            type: string
+        model:
+          type: string
+        prompt_version:
+          type: string
+        generated_at:
+          type: string
+          format: date-time
+        request_id:
+          type: string
+      required:
+      - answer
+      - confidence
+      - generated_at
+      - model
+      - prompt_version
+      - question
+      - request_id
+    AIRecommendation:
+      type: object
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        user:
+          type: integer
+          readOnly: true
+        user_email:
+          type: string
+          format: email
+          title: Email address
+          readOnly: true
+        shipment:
+          type: integer
+          nullable: true
+        recommendation_type:
+          type: string
+          maxLength: 100
+        recommendation:
+          type: string
+        rationale:
+          type: string
+        evidence: {}
+        confidence_score:
+          type: number
+          format: double
+        status:
+          $ref: '#/components/schemas/AIRecommendationStatusEnum'
+        severity:
+          type: string
+          maxLength: 20
+        model_name:
+          type: string
+          maxLength: 100
+        prompt_version:
+          type: string
+          maxLength: 50
+        request_id:
+          type: string
+          maxLength: 255
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        expires_at:
+          type: string
+          format: date-time
+          readOnly: true
+          nullable: true
+      required:
+      - created_at
+      - expires_at
+      - id
+      - rationale
+      - recommendation
+      - recommendation_type
+      - user
+      - user_email
+    AIRecommendationStatusEnum:
+      enum:
+      - PENDING
+      - ACCEPTED
+      - REJECTED
+      - EXPIRED
+      type: string
+      description: |-
+        * `PENDING` - Pending Human Review
+        * `ACCEPTED` - Accepted by Human
+        * `REJECTED` - Rejected by Human
+        * `EXPIRED` - Expired
+    AIRiskExplanation:
+      type: object
+      properties:
+        shipment_id:
+          type: integer
+        risk_level:
+          type: string
+        risk_score:
+          type: number
+          format: double
+        summary:
+          type: string
+        contributing_factors:
+          type: array
+          items:
+            type: object
+            additionalProperties: {}
+        evidence:
+          type: array
+          items:
+            type: object
+            additionalProperties: {}
+        potential_consequences:
+          type: array
+          items:
+            type: string
+        confidence:
+          type: number
+          format: double
+        model:
+          type: string
+        prompt_version:
+          type: string
+        generated_at:
+          type: string
+          format: date-time
+        request_id:
+          type: string
+      required:
+      - confidence
+      - generated_at
+      - model
+      - prompt_version
+      - request_id
+      - risk_level
+      - risk_score
+      - shipment_id
+      - summary
+    AIRouteExplanation:
+      type: object
+      properties:
+        shipment_id:
+          type: integer
+        route_status:
+          type: string
+        progress_percentage:
+          type: number
+          format: double
+        eta:
+          type: string
+          format: date-time
+          nullable: true
+        summary:
+          type: string
+        telemetry_quality:
+          type: string
+        potential_delays:
+          type: array
+          items:
+            type: string
+        evidence:
+          type: array
+          items:
+            type: object
+            additionalProperties: {}
+        confidence:
+          type: number
+          format: double
+        model:
+          type: string
+        prompt_version:
+          type: string
+        generated_at:
+          type: string
+          format: date-time
+        request_id:
+          type: string
+      required:
+      - confidence
+      - eta
+      - generated_at
+      - model
+      - progress_percentage
+      - prompt_version
+      - request_id
+      - route_status
+      - shipment_id
+      - summary
+      - telemetry_quality
+    AIShipmentSummary:
+      type: object
+      properties:
+        shipment_id:
+          type: integer
+        tracking_number:
+          type: string
+        status:
+          type: string
+        operational_health:
+          type: string
+        summary:
+          type: string
+        key_findings:
+          type: array
+          items:
+            type: string
+        risks:
+          type: array
+          items:
+            type: string
+        recommended_attention:
+          type: string
+        evidence:
+          type: array
+          items:
+            type: object
+            additionalProperties: {}
+        confidence:
+          type: number
+          format: double
+        model:
+          type: string
+        prompt_version:
+          type: string
+        generated_at:
+          type: string
+          format: date-time
+        request_id:
+          type: string
+      required:
+      - confidence
+      - generated_at
+      - model
+      - operational_health
+      - prompt_version
+      - recommended_attention
+      - request_id
+      - shipment_id
+      - status
+      - summary
+      - tracking_number
+    AIUsageRecord:
+      type: object
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        user:
+          type: integer
+          readOnly: true
+          nullable: true
+        user_email:
+          type: string
+          format: email
+          title: Email address
+          readOnly: true
+        request_id:
+          type: string
+          readOnly: true
+        provider:
+          type: string
+          readOnly: true
+        model:
+          type: string
+          readOnly: true
+        input_tokens:
+          type: integer
+          readOnly: true
+        output_tokens:
+          type: integer
+          readOnly: true
+        total_tokens:
+          type: integer
+          readOnly: true
+        latency_ms:
+          type: integer
+          readOnly: true
+        estimated_cost:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,6}(?:\.\d{0,4})?$
+          readOnly: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+      required:
+      - created_at
+      - estimated_cost
+      - id
+      - input_tokens
+      - latency_ms
+      - model
+      - output_tokens
+      - provider
+      - request_id
+      - total_tokens
+      - user
+      - user_email
     AssignDriver:
       type: object
       properties:
@@ -5888,6 +6814,30 @@ components:
       required:
       - level
       - risk_score
+    InsightTypeEnum:
+      enum:
+      - SHIPMENT_SUMMARY
+      - RISK_EXPLANATION
+      - INCIDENT_ANALYSIS
+      - ROUTE_ANALYSIS
+      - ETA_EXPLANATION
+      - MARKET_ANALYSIS
+      - PRICING_EXPLANATION
+      - OPERATIONAL_ANOMALY
+      - EXECUTIVE_SUMMARY
+      - GENERAL_OPERATIONAL_INSIGHT
+      type: string
+      description: |-
+        * `SHIPMENT_SUMMARY` - Shipment Executive Summary
+        * `RISK_EXPLANATION` - Shipment Risk Explanation
+        * `INCIDENT_ANALYSIS` - Incident Analysis
+        * `ROUTE_ANALYSIS` - Route & Telemetry Analysis
+        * `ETA_EXPLANATION` - ETA Variance Explanation
+        * `MARKET_ANALYSIS` - Market & Demand Analysis
+        * `PRICING_EXPLANATION` - Freight Pricing Explanation
+        * `OPERATIONAL_ANOMALY` - Operational Anomaly Explanation
+        * `EXECUTIVE_SUMMARY` - Executive Operations Summary
+        * `GENERAL_OPERATIONAL_INSIGHT` - General Operational Insight
     IntegrationEventPublish:
       type: object
       properties:

@@ -2738,6 +2738,258 @@ class SecurityComplianceReportAPIView(APIView):
         return Response(serializer.data, status=status.HTTP_200_OK)
 
 
+# ============================================================================
+# PHASE 20: AI-ASSISTED DECISION SUPPORT & INTELLIGENT OPERATIONS VIEWS
+# ============================================================================
+from apps.marketplace.ai_services import AIService
+from apps.marketplace.ai_serializers import (
+    AIInsightSerializer,
+    AIRecommendationSerializer,
+    AIShipmentSummarySerializer,
+    AIRiskExplanationSerializer,
+    AIIncidentAnalysisSerializer,
+    AIRouteExplanationSerializer,
+    AIPricingExplanationSerializer,
+    AIExecutiveSummarySerializer,
+    AIQueryRequestSerializer,
+    AIQueryResponseSerializer,
+    AIUsageRecordSerializer,
+    AIOverviewSerializer,
+    AIHealthSerializer,
+)
+from apps.marketplace.models import AIInsight, AIRecommendation, AIUsageRecord
+
+
+class AIShipmentSummaryAPIView(APIView):
+    """
+    GET: Generate concise operational decision-support summary for a specific shipment.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = AIShipmentSummarySerializer
+
+    @extend_schema(request=None, responses={200: AIShipmentSummarySerializer})
+    def get(self, request, pk):
+        summary_data = AIService.generate_shipment_summary(request.user, pk)
+        serializer = AIShipmentSummarySerializer(summary_data)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class AIRiskExplanationAPIView(APIView):
+    """
+    GET: Explain risk level and major contributing factors for a specific shipment.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = AIRiskExplanationSerializer
+
+    @extend_schema(request=None, responses={200: AIRiskExplanationSerializer})
+    def get(self, request, pk):
+        risk_data = AIService.generate_risk_explanation(request.user, pk)
+        serializer = AIRiskExplanationSerializer(risk_data)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class AIIncidentAnalysisAPIView(APIView):
+    """
+    GET: Analyze recent driver incidents and operational impacts for a specific shipment.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = AIIncidentAnalysisSerializer
+
+    @extend_schema(request=None, responses={200: AIIncidentAnalysisSerializer})
+    def get(self, request, pk):
+        incident_data = AIService.generate_incident_analysis(request.user, pk)
+        serializer = AIIncidentAnalysisSerializer(incident_data)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class AIRouteExplanationAPIView(APIView):
+    """
+    GET: Explain route progress, telemetry quality, and ETA variance for a specific shipment.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = AIRouteExplanationSerializer
+
+    @extend_schema(request=None, responses={200: AIRouteExplanationSerializer})
+    def get(self, request, pk):
+        route_data = AIService.generate_route_explanation(request.user, pk)
+        serializer = AIRouteExplanationSerializer(route_data)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class AIPricingExplanationAPIView(APIView):
+    """
+    GET: Explain freight pricing recommendations and market pressure for a specific shipment.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = AIPricingExplanationSerializer
+
+    @extend_schema(request=None, responses={200: AIPricingExplanationSerializer})
+    def get(self, request, pk):
+        pricing_data = AIService.generate_pricing_explanation(request.user, pk)
+        serializer = AIPricingExplanationSerializer(pricing_data)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class AIRecommendationCreateAPIView(APIView):
+    """
+    POST: Generate a human-in-the-loop decision-support recommendation for a shipment. Remains PENDING until reviewed.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = AIRecommendationSerializer
+
+    @extend_schema(request=None, responses={201: AIRecommendationSerializer})
+    def post(self, request, pk):
+        rec_type = request.data.get('recommendation_type', 'OPERATIONAL_ADVISORY')
+        rec = AIService.create_operational_recommendation(request.user, pk, recommendation_type=rec_type)
+        serializer = AIRecommendationSerializer(rec)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+
+class AIExecutiveSummaryAPIView(APIView):
+    """
+    GET: Generate platform-wide executive operations decision-support summary (Admin Only).
+    """
+    permission_classes = [permissions.IsAuthenticated, permissions.IsAdminUser]
+    serializer_class = AIExecutiveSummarySerializer
+
+    @extend_schema(request=None, responses={200: AIExecutiveSummarySerializer})
+    def get(self, request):
+        exec_data = AIService.generate_executive_summary(request.user)
+        serializer = AIExecutiveSummarySerializer(exec_data)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class AINaturalLanguageQueryAPIView(APIView):
+    """
+    POST: Execute natural-language query across authorized TradeFlow operational data.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = AIQueryResponseSerializer
+
+    @extend_schema(request=AIQueryRequestSerializer, responses={200: AIQueryResponseSerializer})
+    def post(self, request):
+        serializer = AIQueryRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        question = serializer.validated_data['question']
+
+        query_res = AIService.execute_natural_language_query(request.user, question)
+        res_serializer = AIQueryResponseSerializer(query_res)
+        return Response(res_serializer.data, status=status.HTTP_200_OK)
+
+
+class AIInsightListAPIView(APIView):
+    """
+    GET: List generated AI decision-support insights for authorized user.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = AIInsightSerializer
+
+    @extend_schema(request=None, responses={200: AIInsightSerializer(many=True)})
+    def get(self, request):
+        if request.user.role == Role.ADMIN or getattr(request.user, 'is_staff', False):
+            qs = AIInsight.objects.all()
+        else:
+            qs = AIInsight.objects.filter(user=request.user)
+        serializer = AIInsightSerializer(qs[:100], many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class AIInsightDetailAPIView(APIView):
+    """
+    GET: Retrieve details for a specific AI insight record.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = AIInsightSerializer
+
+    @extend_schema(request=None, responses={200: AIInsightSerializer})
+    def get(self, request, pk):
+        insight = AIInsight.objects.filter(id=pk).first()
+        if not insight:
+            return Response({"detail": "AI insight not found."}, status=status.HTTP_404_NOT_FOUND)
+        if request.user.role != Role.ADMIN and insight.user != request.user:
+            return Response({"detail": "Unauthorized access to AI insight."}, status=status.HTTP_403_FORBIDDEN)
+        serializer = AIInsightSerializer(insight)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class AIRecommendationListAPIView(APIView):
+    """
+    GET: List AI-generated operational recommendations for authorized user.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = AIRecommendationSerializer
+
+    @extend_schema(request=None, responses={200: AIRecommendationSerializer(many=True)})
+    def get(self, request):
+        if request.user.role == Role.ADMIN or getattr(request.user, 'is_staff', False):
+            qs = AIRecommendation.objects.all()
+        else:
+            qs = AIRecommendation.objects.filter(user=request.user)
+        serializer = AIRecommendationSerializer(qs[:100], many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class AIRecommendationDetailAPIView(APIView):
+    """
+    GET: Retrieve specific AI recommendation details.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = AIRecommendationSerializer
+
+    @extend_schema(request=None, responses={200: AIRecommendationSerializer})
+    def get(self, request, pk):
+        rec = AIRecommendation.objects.filter(id=pk).first()
+        if not rec:
+            return Response({"detail": "AI recommendation not found."}, status=status.HTTP_404_NOT_FOUND)
+        if request.user.role != Role.ADMIN and rec.user != request.user:
+            return Response({"detail": "Unauthorized access to AI recommendation."}, status=status.HTTP_403_FORBIDDEN)
+        serializer = AIRecommendationSerializer(rec)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class AIUsageMetricsAPIView(APIView):
+    """
+    GET: Retrieve administrative AI token usage and cost metrics (Admin Only).
+    """
+    permission_classes = [permissions.IsAuthenticated, permissions.IsAdminUser]
+    serializer_class = AIUsageRecordSerializer
+
+    @extend_schema(request=None, responses={200: AIUsageRecordSerializer(many=True)})
+    def get(self, request):
+        qs = AIUsageRecord.objects.all()
+        serializer = AIUsageRecordSerializer(qs[:100], many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class AIOverviewAPIView(APIView):
+    """
+    GET: Retrieve administrative AI decision-support dashboard overview (Admin Only).
+    """
+    permission_classes = [permissions.IsAuthenticated, permissions.IsAdminUser]
+    serializer_class = AIOverviewSerializer
+
+    @extend_schema(request=None, responses={200: AIOverviewSerializer})
+    def get(self, request):
+        overview_data = AIService.get_overview_dashboard()
+        serializer = AIOverviewSerializer(overview_data)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class AIHealthCheckAPIView(APIView):
+    """
+    GET: Check AI provider operational health and response latency.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = AIHealthSerializer
+
+    @extend_schema(request=None, responses={200: AIHealthSerializer})
+    def get(self, request):
+        health_data = AIService.check_health()
+        serializer = AIHealthSerializer(health_data)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+
 
 
 

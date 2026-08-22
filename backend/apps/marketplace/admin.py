@@ -353,6 +353,64 @@ class SecurityPolicyAdmin(admin.ModelAdmin):
     readonly_fields = ('created_at', 'updated_at')
 
 
+# ============================================================================
+# PHASE 20: AI-ASSISTED DECISION SUPPORT ADMIN REGISTRATIONS
+# ============================================================================
+from apps.marketplace.models import (
+    AIModelConfiguration, AIGenerationRequest, AIInsight,
+    AIRecommendation, AIPromptVersion, AIUsageRecord
+)
+
+
+@admin.register(AIModelConfiguration)
+class AIModelConfigurationAdmin(admin.ModelAdmin):
+    list_display = ('provider', 'model_name', 'display_name', 'is_active', 'temperature', 'timeout_seconds', 'updated_at')
+    list_filter = ('is_active', 'provider')
+    search_fields = ('provider', 'model_name', 'display_name')
+    readonly_fields = ('created_at', 'updated_at')
+
+
+@admin.register(AIGenerationRequest)
+class AIGenerationRequestAdmin(admin.ModelAdmin):
+    list_display = ('request_id', 'user', 'task_type', 'provider', 'model_name', 'status', 'latency_ms', 'started_at')
+    list_filter = ('status', 'task_type', 'provider', 'started_at')
+    search_fields = ('request_id', 'input_reference', 'user__email', 'error_message')
+    readonly_fields = ('user', 'request_id', 'task_type', 'provider', 'model_name', 'prompt_version', 'input_reference', 'status', 'started_at', 'completed_at', 'latency_ms', 'error_code', 'error_message', 'created_at')
+
+
+@admin.register(AIInsight)
+class AIInsightAdmin(admin.ModelAdmin):
+    list_display = ('id', 'user', 'shipment', 'insight_type', 'title', 'confidence_score', 'severity', 'created_at')
+    list_filter = ('insight_type', 'severity', 'created_at')
+    search_fields = ('title', 'summary', 'detailed_analysis', 'user__email', 'request_id')
+    readonly_fields = ('created_at',)
+
+
+@admin.register(AIRecommendation)
+class AIRecommendationAdmin(admin.ModelAdmin):
+    list_display = ('id', 'user', 'shipment', 'recommendation_type', 'status', 'confidence_score', 'severity', 'created_at')
+    list_filter = ('status', 'recommendation_type', 'severity', 'created_at')
+    search_fields = ('recommendation', 'rationale', 'user__email', 'request_id')
+    readonly_fields = ('created_at',)
+
+
+@admin.register(AIPromptVersion)
+class AIPromptVersionAdmin(admin.ModelAdmin):
+    list_display = ('name', 'version', 'task_type', 'is_active', 'updated_at')
+    list_filter = ('is_active', 'task_type')
+    search_fields = ('name', 'version', 'template', 'system_instruction')
+    readonly_fields = ('created_at', 'updated_at')
+
+
+@admin.register(AIUsageRecord)
+class AIUsageRecordAdmin(admin.ModelAdmin):
+    list_display = ('request_id', 'user', 'provider', 'model', 'total_tokens', 'latency_ms', 'estimated_cost', 'created_at')
+    list_filter = ('provider', 'model', 'created_at')
+    search_fields = ('request_id', 'user__email')
+    readonly_fields = ('user', 'request_id', 'provider', 'model', 'input_tokens', 'output_tokens', 'total_tokens', 'latency_ms', 'estimated_cost', 'created_at')
+
+
+
 
 
 

@@ -1924,6 +1924,258 @@ class SecurityPolicy(models.Model):
         return f"Security Policy '{self.name}' ({self.policy_type}) - Enabled: {self.enabled}"
 
 
+# ============================================================================
+# PHASE 20: AI-ASSISTED DECISION SUPPORT & INTELLIGENT OPERATIONS MODELS
+# ============================================================================
+
+class AIGenerationStatus(models.TextChoices):
+    PENDING = 'PENDING', 'Pending'
+    PROCESSING = 'PROCESSING', 'Processing'
+    COMPLETED = 'COMPLETED', 'Completed'
+    FAILED = 'FAILED', 'Failed'
+    TIMEOUT = 'TIMEOUT', 'Timeout'
+    REJECTED = 'REJECTED', 'Rejected'
+
+
+class AIInsightType(models.TextChoices):
+    SHIPMENT_SUMMARY = 'SHIPMENT_SUMMARY', 'Shipment Executive Summary'
+    RISK_EXPLANATION = 'RISK_EXPLANATION', 'Shipment Risk Explanation'
+    INCIDENT_ANALYSIS = 'INCIDENT_ANALYSIS', 'Incident Analysis'
+    ROUTE_ANALYSIS = 'ROUTE_ANALYSIS', 'Route & Telemetry Analysis'
+    ETA_EXPLANATION = 'ETA_EXPLANATION', 'ETA Variance Explanation'
+    MARKET_ANALYSIS = 'MARKET_ANALYSIS', 'Market & Demand Analysis'
+    PRICING_EXPLANATION = 'PRICING_EXPLANATION', 'Freight Pricing Explanation'
+    OPERATIONAL_ANOMALY = 'OPERATIONAL_ANOMALY', 'Operational Anomaly Explanation'
+    EXECUTIVE_SUMMARY = 'EXECUTIVE_SUMMARY', 'Executive Operations Summary'
+    GENERAL_OPERATIONAL_INSIGHT = 'GENERAL_OPERATIONAL_INSIGHT', 'General Operational Insight'
+
+
+class AIRecommendationStatus(models.TextChoices):
+    PENDING = 'PENDING', 'Pending Human Review'
+    ACCEPTED = 'ACCEPTED', 'Accepted by Human'
+    REJECTED = 'REJECTED', 'Rejected by Human'
+    EXPIRED = 'EXPIRED', 'Expired'
+
+
+class AIModelConfiguration(models.Model):
+    """
+    Configurable AI provider parameters and model governance settings.
+    """
+    provider = models.CharField(max_length=100, default='MockAIProvider', db_index=True)
+    model_name = models.CharField(max_length=100, default='tradeflow-decision-support-v1', db_index=True)
+    display_name = models.CharField(max_length=255, blank=True)
+    is_active = models.BooleanField(default=True, db_index=True)
+
+    temperature = models.FloatField(default=0.2)
+    max_tokens = models.PositiveIntegerField(default=1024)
+    timeout_seconds = models.PositiveIntegerField(default=10)
+
+    configuration = models.JSONField(default=dict, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'AI Model Configuration'
+        verbose_name_plural = 'AI Model Configurations'
+        ordering = ['-is_active', 'provider', 'model_name']
+
+    def __str__(self):
+        return f"{self.provider} - {self.model_name} (Active: {self.is_active})"
+
+
+class AIGenerationRequest(models.Model):
+    """
+    Audit log of all AI decision-support requests, latencies, tokens, and status.
+    """
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='ai_generation_requests'
+    )
+    request_id = models.CharField(max_length=255, db_index=True)
+    task_type = models.CharField(max_length=100, db_index=True)
+
+    provider = models.CharField(max_length=100, blank=True)
+    model_name = models.CharField(max_length=100, blank=True)
+    prompt_version = models.CharField(max_length=50, default='v1.0')
+
+    input_reference = models.CharField(max_length=255, blank=True)
+    status = models.CharField(max_length=20, choices=AIGenerationStatus.choices, default=AIGenerationStatus.PENDING, db_index=True)
+
+    started_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    latency_ms = models.PositiveIntegerField(default=0)
+
+    error_code = models.CharField(max_length=100, blank=True)
+    error_message = models.TextField(blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = 'AI Generation Request'
+        verbose_name_plural = 'AI Generation Requests'
+        ordering = ['-started_at']
+        indexes = [
+            models.Index(fields=['started_at', 'task_type']),
+            models.Index(fields=['user', 'started_at']),
+        ]
+
+    def __str__(self):
+        return f"AI Request {self.request_id} ({self.task_type}) -> {self.status}"
+
+
+class AIInsight(models.Model):
+    """
+    Persisted AI-generated decision support explanations, summaries, and operational findings.
+    """
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='ai_insights'
+    )
+    shipment = models.ForeignKey(
+        'Shipment',
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='ai_insights'
+    )
+
+    insight_type = models.CharField(max_length=50, choices=AIInsightType.choices, db_index=True)
+    title = models.CharField(max_length=255)
+    summary = models.TextField()
+    detailed_analysis = models.TextField(blank=True)
+
+    confidence_score = models.FloatField(default=0.95)
+    severity = models.CharField(max_length=20, default='INFO', db_index=True)
+    evidence = models.JSONField(default=list, blank=True)
+
+    model_name = models.CharField(max_length=100, blank=True)
+    prompt_version = models.CharField(max_length=50, default='v1.0')
+    request_id = models.CharField(max_length=255, blank=True, db_index=True)
+
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    expires_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        verbose_name = 'AI Insight'
+        verbose_name_plural = 'AI Insights'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['user', 'insight_type', 'created_at']),
+            models.Index(fields=['shipment', 'insight_type']),
+        ]
+
+    def __str__(self):
+        return f"AI Insight #{self.id} [{self.insight_type}] {self.title} (Conf: {self.confidence_score})"
+
+
+class AIRecommendation(models.Model):
+    """
+    Human-in-the-loop decision-support recommendations generated by AI.
+    Strictly advisory — NEVER automatically executes operational actions.
+    """
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='ai_recommendations'
+    )
+    shipment = models.ForeignKey(
+        'Shipment',
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='ai_recommendations'
+    )
+
+    recommendation_type = models.CharField(max_length=100, db_index=True)
+    recommendation = models.TextField()
+    rationale = models.TextField()
+    evidence = models.JSONField(default=list, blank=True)
+
+    confidence_score = models.FloatField(default=0.90)
+    status = models.CharField(max_length=20, choices=AIRecommendationStatus.choices, default=AIRecommendationStatus.PENDING, db_index=True)
+    severity = models.CharField(max_length=20, default='MEDIUM')
+
+    model_name = models.CharField(max_length=100, blank=True)
+    prompt_version = models.CharField(max_length=50, default='v1.0')
+    request_id = models.CharField(max_length=255, blank=True, db_index=True)
+
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    expires_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        verbose_name = 'AI Recommendation'
+        verbose_name_plural = 'AI Recommendations'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"AI Rec #{self.id} ({self.recommendation_type}) -> {self.status}"
+
+
+class AIPromptVersion(models.Model):
+    """
+    Prompt template governance and version tracking.
+    """
+    name = models.CharField(max_length=100, db_index=True)
+    version = models.CharField(max_length=50, default='v1.0')
+    task_type = models.CharField(max_length=100, db_index=True)
+
+    template = models.TextField()
+    system_instruction = models.TextField(blank=True)
+    is_active = models.BooleanField(default=True, db_index=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'AI Prompt Version'
+        verbose_name_plural = 'AI Prompt Versions'
+        ordering = ['name', '-version']
+        constraints = [
+            models.UniqueConstraint(fields=['name', 'version'], name='unique_prompt_name_version')
+        ]
+
+    def __str__(self):
+        return f"Prompt {self.name}:{self.version} ({self.task_type})"
+
+
+class AIUsageRecord(models.Model):
+    """
+    Tracks token counts, latencies, and estimated monetary cost for AI operations.
+    """
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='ai_usage_records'
+    )
+    request_id = models.CharField(max_length=255, db_index=True)
+    provider = models.CharField(max_length=100, db_index=True)
+    model = models.CharField(max_length=100, db_index=True)
+
+    input_tokens = models.PositiveIntegerField(default=0)
+    output_tokens = models.PositiveIntegerField(default=0)
+    total_tokens = models.PositiveIntegerField(default=0)
+    latency_ms = models.PositiveIntegerField(default=0)
+
+    estimated_cost = models.DecimalField(max_digits=10, decimal_places=4, default=0.0000)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        verbose_name = 'AI Usage Record'
+        verbose_name_plural = 'AI Usage Records'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"AI Usage {self.request_id}: {self.total_tokens} tokens (${self.estimated_cost})"
+
+
+
 
 
 
